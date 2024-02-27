@@ -1,0 +1,190 @@
+@import url('https://fonts.googleapis.com/css2?family=Lato&display=swap');
+
+*{
+    box-sizing: border-box;
+}
+
+body{
+    background-color: #000000;
+    display: flex;
+    flex-direction: column;
+    color: #fff;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    font-family: 'Lato', sans-serif;
+}
+
+.movie-container {
+    margin:  20px 0;
+}
+
+.movie-container select {
+    background-color: #fff;
+    border: 0;
+    border-radius: 5px;
+    font-size:  14px;
+    margin-left: 10px;
+    padding: 5px 15px;
+    appearance: none;
+    -moz-appearance: none;
+    -webkit-appearance: none;
+}
+
+.container {
+    perspective: 1000px;
+    margin-bottom: 30px;
+}
+
+.seat {
+    background-color:  #505144;
+    height: 12px;
+    width: 15px;
+    margin: 3px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+}
+
+.seat.selected{
+    background-color: #ff0000;
+}
+
+.seat:nth-of-type(2){
+    margin-right: 18px;
+}
+
+.seat.seat:nth-last-of-type(2){
+    margin-left: 18px;
+}
+
+.seat:not(.occupied):hover{
+    cursor: pointer;
+    transform: scale(1.2);
+}
+
+.showcase .seat:not(.occupied):hover{
+    cursor: default;
+    transform: scale(1);
+}
+
+.showcase{
+    background-color: rgba(0,0,0,0.1);
+    padding: 5px 10px;
+    border-radius: 5px;
+    color: #777;
+    list-style-type: none;
+    display: flex;
+    justify-content: space-between;
+}
+
+.showcase li {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0px 10px;
+}
+
+.showcase li small{
+    margin-left: 2px;
+}
+
+.seat.occupied{
+    background-color: #ffee00;
+}
+
+.row {
+    display: flex;
+}
+
+.screen{
+
+    background-image: url(.//img/png-transparent-spider-man-hanging-on-web-illustration-spider-man-chibi-drawing-superhero-spider-man-heroes-christmas-decoration-holiday-ornament.png);
+    background-attachment: fixed;
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    height: 150px;
+    width: 100%;
+    margin: 15px 0;
+    transform: rotateX(-45deg);
+    box-shadow: 0 33px 20px rgba(255,255,255,0.7);
+}
+
+p.text{
+    margin: 5px 0;
+}
+
+p.text span {
+    color: #6feaf6;
+}
+
+
+.photo{
+    width: 60px;
+    height: auto;
+    position: relative;
+    left: 100px;
+    top: 20px;
+}
+
+
+
+img {
+    max-width: 70%;
+    position: relative;
+    right: 300px;
+    bottom: 600px;
+}
+
+
+
+.container {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+}
+
+.container .spiderman {
+    width: 300px;
+    vertical-align: top;
+    margin-top: -60px;
+    animation-name: animar;
+    animation-duration: 2s;
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+}
+
+.shadow {
+    width: 200px;
+    height: 20px;
+    margin: 20px 0;
+    margin-left: 20px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 50%;
+    animation: nodo 2s alternate infinite;
+}
+
+@keyframes animar {
+    from {
+        transform: translateY(-100px);    
+    }
+    to {
+        transform: translateY(0px);
+    }
+}
+
+@keyframes nodo {
+    0% {
+        transform: scale(1);
+    }
+    100% {
+        transform: scale(0.6)
+        opacity: 0.2;
+    }
+}
+
+
+
