@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>calculator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="calculator">
+        <label for="amount">Enter amount in USD:</label>
+        <input type="number" id="amount" placeholder="0.000">
+        <label for="currency">Select currency:</label>
+        <select id="currency">
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="JPY">JPY</option>
+          <option value="AUD">AUD</option>
+          <option value="AUD">MVR</option>
+        </select>
+        <button onclick="calculate()">Calculate</button>
+        <div id="result"></div>
+      </div>
+      <script src="main.js"></script>
+    </body>
+    
+  
+</body>
+</html>
