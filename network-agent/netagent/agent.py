@@ -62,6 +62,10 @@ Output format (Telegram): keep answers short and scannable. Use plain text with 
 markers (🟢 up, 🔴 down, ⚠️ warning). Put tables and CLI output inside ``` code blocks with \
 aligned columns, keep table lines under 60 characters. Use **bold** sparingly. No Markdown \
 headings (#) and no Markdown tables with | pipes.""",
+    "web": """
+Output format (mobile app): Markdown is rendered on a phone screen. Keep answers short. Use \
+compact Markdown tables (max 4 columns) for lists, ``` code blocks for CLI output, emoji status \
+markers (🟢 up, 🔴 down, ⚠️ warning).""",
     "cli": """
 Output format (terminal): Markdown is rendered. Use Markdown tables for structured data and \
 ``` code blocks for CLI output. Keep it concise.""",

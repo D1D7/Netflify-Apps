@@ -75,3 +75,23 @@ class AlertMutes:
             name = "ყველა მოწყობილობა" if target == ALL else target
             lines.append(f"• {name} — დარჩა {format_duration(until - now)}")
         return "\n".join(lines)
+
+
+class AlertLog:
+    """Recent alerts (persisted) for the app's dashboard."""
+
+    KEY = "alert_log"
+    MAX = 200
+
+    def __init__(self, state: StateStore) -> None:
+        self.state = state
+
+    def add(self, kind: str, text: str, devices: list[str] | None = None) -> dict:
+        from datetime import datetime
+
+        entry = {"ts": datetime.now().isoformat(timespec="seconds"), "kind": kind, "text": text, "devices": devices or []}
+        self.state.update(self.KEY, lambda items: ([*(items or []), entry])[-self.MAX:])
+        return entry
+
+    def recent(self, limit: int = 50) -> list[dict]:
+        return list(reversed((self.state.get(self.KEY, []) or [])[-limit:]))

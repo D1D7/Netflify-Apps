@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+from typing import Any
 
 TELEGRAM_LIMIT = 3800  # Telegram's hard limit is 4096; leave room for tags
 
@@ -58,3 +59,40 @@ def markdown_to_telegram_html(text: str) -> str:
 def first_line(text: str) -> str:
     """First non-empty line (Netmiko errors span many lines of advice)."""
     return next((ln.strip() for ln in str(text).splitlines() if ln.strip()), "")
+
+
+# Short progress labels for tool calls (shown while the agent works).
+TOOL_LABELS = {
+    "list_devices": "📋 მოწყობილობების სია",
+    "get_device_data": "📡 {device}: {data}",
+    "get_data_from_many": "📡 ყველა{filter_s}: {data}",
+    "run_show_command": "💻 {device}: {command}",
+    "find_on_network": "🔎 ძებნა: {query}",
+    "device_config_summary": "📄 {device}: config-ის ანალიზი",
+    "ping": "📶 ping {host}",
+    "traceroute": "🛣 traceroute {host}",
+    "dns_lookup": "🌐 DNS {name}",
+    "tcp_port_check": "🔌 {host}:{port}",
+    "subnet_calculator": "🧮 subnet {network}",
+    "check_reachability": "🩺 ხელმისაწვდომობა{filter_s}",
+    "backup_configs": "💾 backup{filter_s}",
+    "config_changes": "📝 {device}: ცვლილებები",
+    "export_excel": "📊 Excel: {filename}",
+    "security_audit": "🛡 აუდიტი{filter_s}",
+    "subnet_usage": "🔢 IP-ები: {network}",
+    "device_health": "🩺 {device}: მდგომარეობა",
+    "latency_history": "📈 {device}: ისტორია",
+    "get_notes": "📝 შენიშვნები",
+    "save_note": "📝 შენიშვნის შენახვა",
+    "delete_note": "📝 შენიშვნის წაშლა",
+    "discover_devices": "🔍 სკანირება: {network}",
+}
+
+
+def describe_tool(name: str, args: dict[str, Any]) -> str:
+    template = TOOL_LABELS.get(name, f"🔧 {name}")
+    filter_s = f" ({args['filter']})" if args.get("filter") else ""
+    try:
+        return template.format(filter_s=filter_s, **args)
+    except (KeyError, IndexError, ValueError):
+        return f"🔧 {name}"

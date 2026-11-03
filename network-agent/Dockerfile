@@ -14,4 +14,5 @@ COPY inventory/devices.example.yaml ./inventory/devices.example.yaml
 
 RUN mkdir -p logs backups exports data
 
-CMD ["python", "-m", "netagent.telegram_bot"]
+EXPOSE 8080
+CMD ["python", "-m", "netagent.server"]

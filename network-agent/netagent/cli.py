@@ -12,6 +12,8 @@
   python -m netagent.cli ips 10.1.1.0/24      # used / free IPs in a subnet
   python -m netagent.cli cmd R1 show clock    # run one read-only command (no AI)
   python -m netagent.cli usage                # AI cost
+  python -m netagent.cli web-setup --totp     # app password + 2FA
+  python -m netagent.cli serve                # app server (+ monitoring + Telegram)
   python -m netagent.cli discover 10.0.0.0/24 --add   # find devices, add to inventory
   python -m netagent.cli health R1            # interfaces / BGP / OSPF / CPU
   python -m netagent.cli graph R1             # latency chart PNG (needs the bot's monitoring data)
@@ -49,16 +51,9 @@ def _state() -> StateStore:
 
 
 def _make_agent():
-    from .agent import NetAgent
-    from .history import LatencyHistory
-    from .notes import NoteStore
+    from .services import Services
 
-    state = _state()
-    return NetAgent(
-        usage=UsageTracker(state, settings.daily_budget_usd),
-        notes=NoteStore(state),
-        history=LatencyHistory(settings.data_dir / "latency"),
-    )
+    return Services.create().agent
 
 
 def _usage_tracker() -> UsageTracker:
@@ -435,6 +430,42 @@ def cmd_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_web_setup(args: argparse.Namespace) -> int:
+    from .web.auth import WebAuth, totp_uri
+
+    auth = WebAuth(settings.data_dir / "web_auth.json")
+    if args.disable_totp:
+        auth.disable_totp()
+        console.print("🔓 2FA გამორთულია.")
+        return 0
+    if not args.totp_only:
+        while True:
+            pw = getpass.getpass("აპის ახალი პაროლი (მინ. 10 სიმბოლო): ")
+            if pw != getpass.getpass("გაიმეორე პაროლი: "):
+                console.print("[red]პაროლები არ ემთხვევა[/red]")
+                continue
+            try:
+                auth.set_password(pw)
+                break
+            except ValueError as exc:
+                console.print(f"[red]{exc}[/red]")
+        console.print("[green]✅ პაროლი შენახულია[/green] (ყველა ძველი სესია გაუქმდა)")
+    if args.totp or args.totp_only:
+        secret = auth.enable_totp()
+        console.print("\n🔐 [bold]2FA ჩართულია.[/bold] Google Authenticator-ში: ➕ → „Enter a setup key“")
+        console.print(f"   Account: NetAgent\n   Key:     [bold]{secret}[/bold]\n   Type:    Time based")
+        console.print(f"[dim]{totp_uri(secret)}[/dim]")
+    console.print(f"\nგაშვება: [bold]python -m netagent serve[/bold]  →  http://{settings.web_host}:{settings.web_port}")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .server import main as server_main
+
+    server_main()
+    return 0
+
+
 def cmd_usage(args: argparse.Namespace) -> int:
     console.print(Markdown(_usage_tracker().summary().replace("\n", "  \n")))
     return 0
@@ -515,6 +546,11 @@ def main(argv: list[str] | None = None) -> int:
     p_cmd.add_argument("target", help="მოწყობილობა, ფილტრი ან all")
     p_cmd.add_argument("command", nargs="+")
     sub.add_parser("usage", help="AI ხარჯი")
+    p_ws = sub.add_parser("web-setup", help="აპის პაროლის და 2FA-ს დაყენება")
+    p_ws.add_argument("--totp", action="store_true", help="2FA-ს ჩართვაც (Google Authenticator)")
+    p_ws.add_argument("--totp-only", action="store_true", help="მხოლოდ 2FA-ს ჩართვა/ახალი გასაღები")
+    p_ws.add_argument("--disable-totp", action="store_true")
+    sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
     p_disc = sub.add_parser("discover", help="ქსელში მოწყობილობების ძებნა (SSH) და ამოცნობა")
     p_disc.add_argument("network")
     p_disc.add_argument("--add", action="store_true", help="ნაპოვნის დამატება inventory-ში")
@@ -552,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
         "ips": cmd_ips,
         "cmd": cmd_cmd,
         "usage": cmd_usage,
+        "web-setup": cmd_web_setup,
+        "serve": cmd_serve,
         "discover": cmd_discover,
         "health": cmd_health,
         "graph": cmd_graph,

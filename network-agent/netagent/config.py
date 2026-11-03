@@ -61,6 +61,9 @@ class Settings:
     deep_monitor_interval: int = field(
         default_factory=lambda: int(os.getenv("NETAGENT_DEEP_MONITOR_INTERVAL", "5"))
     )
+    # App server (Tailscale: keep 127.0.0.1 and run `tailscale serve --bg 8080`)
+    web_host: str = field(default_factory=lambda: os.getenv("NETAGENT_WEB_HOST", "127.0.0.1"))
+    web_port: int = field(default_factory=lambda: int(os.getenv("NETAGENT_WEB_PORT", "8080")))
     # Persistent state (mutes, usage counters)
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("NETAGENT_DATA_DIR", str(PROJECT_ROOT / "data"))))
     # Max AI spend per day in USD (0 = no limit)

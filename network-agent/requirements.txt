@@ -8,4 +8,7 @@ python-dotenv>=1.0
 rich>=13.0
 openpyxl>=3.1
 matplotlib>=3.8
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
 tzdata; sys_platform == "win32"

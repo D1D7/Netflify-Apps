@@ -104,6 +104,66 @@ config-ები მოწმდება ცნობილ პრობლე�
 
 **მწარმოებლები:** Netmiko-ს მიერ მხარდაჭერილი ნებისმიერი მოწყობილობა (80+ პლატფორმა). მზა ბრძანებების რუკა უკვე აქვს ამ პლატფორმებს: Cisco IOS/XE/NX-OS/XR/ASA, Arista, Juniper, MikroTik, Huawei, HP Comware/ProCurve, Aruba CX, Fortinet, Palo Alto, Dell OS10, Extreme, VyOS/EdgeRouter, Linux. დანარჩენ მოწყობილობებზე აგენტი `run_show_command`-ს იყენებს და ბრძანებას მოწყობილობის საკუთარი სინტაქსით წერს.
 
+## 📱 Android აპი (Telegram-ის გარეშე)
+
+NetAgent-ს აქვს საკუთარი აპი ტელეფონისთვის და კომპიუტერისთვის. აპში არის:
+- 💬 **ჩატი:** ჩანს, რას აკეთებს აგენტი („📡 R1: ip_addresses...“). შეგიძლია ატვირთო ფოტო ან ფაილი, ხოლო ტელეფონის დიდ ფოტოებს აპი თვითონ ამცირებს.
+- 📊 **ქსელი:** ყველა მოწყობილობის სტატუსი, ბოლო ალერტები და სწრაფი ღილაკები. მოწყობილობაზე დაჭერით გამოჩნდება `/health`.
+- 🔔 **Push შეტყობინებები:** ალერტები მოდის მაშინაც, როცა აპი დახურულია.
+- ⚙️ **პარამეტრები:** შეტყობინებები, AI ხარჯი, საუბრის გასუფთავება, გასვლა.
+- ჩატში ყველა სწრაფი ბრძანება მუშაობს: `/status`, `/cmd R1 show clock`, `/graph R1`, `/mute R1 2h`...
+
+![NetAgent აპი: ჩატი, გრაფიკი, ქსელის dashboard, პარამეტრები](docs/app-screenshots.png)
+
+აპი Google Play-ს გარეშე, მხოლოდ შენთვის ინსტალირდება. Android-ზე Chrome მას ნამდვილ აპად აყენებს (WebAPK): ხატულით, სრულ ეკრანზე და შეტყობინებებით.
+
+### როგორ მუშაობს
+```
+📱 ტელეფონი (NetAgent აპი)  ──Tailscale (დაშიფრული, კერძო)──▶  🖥 სერვერი ოფისში ──SSH──▶ 🔀 მოწყობილობები
+```
+აგენტი სერვერზე მუშაობს, ტელეფონში კი მხოლოდ აპია. Tailscale უფასოა და ტელეფონს სერვერთან ისე აკავშირებს, რომ router-ზე პორტის გახსნა არ გჭირდება და ინტერნეტში არაფერი იხსნება.
+
+### დაყენება (ერთხელ)
+
+**1. სერვერზე: აპის პაროლი და 2FA**
+```bash
+python -m netagent web-setup --totp
+```
+პაროლი შეიყვანე, ხოლო გამოჩენილი 2FA გასაღები ჩაწერე Google Authenticator-ში (➕ → „Enter a setup key“).
+
+**2. სერვერზე: გაშვება**
+```bash
+python -m netagent serve
+```
+ერთი პროცესი უშვებს აპს, მონიტორინგს და (ტოკენის არსებობის შემთხვევაში) Telegram-საც. Telegram-ის გამოსართავად `.env`-ში ჩაწერე `NETAGENT_TELEGRAM=off`.
+
+**3. Tailscale: სერვერზე და ტელეფონზე**
+1. დარეგისტრირდი [tailscale.com](https://tailscale.com)-ზე (უფასოა პირადი გამოყენებისთვის).
+2. დააყენე Tailscale სერვერზე ([tailscale.com/download](https://tailscale.com/download)) და შედი იმავე ანგარიშით.
+3. Tailscale admin console → **DNS** → ჩართე **MagicDNS** და **HTTPS Certificates**.
+4. სერვერზე გაუშვი:
+   ```bash
+   tailscale serve --bg 8080
+   ```
+   ბრძანება დაბეჭდავს მისამართს, დაახლოებით ასეთს: `https://office-server.tail1234.ts.net`
+5. ტელეფონზე Google Play-დან დააყენე **Tailscale** აპი და შედი იმავე ანგარიშით.
+
+**4. ტელეფონზე: აპის დაყენება**
+1. Chrome-ში გახსენი მე-3 ნაბიჯის მისამართი (`https://...ts.net`).
+2. შედი პაროლით და 2FA კოდით.
+3. Chrome-ის მენიუ (⋮) → **„Install app“** / **„Add to Home screen“**.
+4. მთავარ ეკრანზე გაჩნდება **NetAgent**-ის ხატულა.
+5. აპში გახსენი ⚙️ → **🔔 შეტყობინებები → ჩართვა** → **სატესტო**.
+
+> 💡 Tailscale ტელეფონზე ჩართული უნდა იყოს. შეგიძლია Android-ის პარამეტრებში მისთვის „Always-on VPN“ ჩართო.
+> კომპიუტერზეც იგივე მისამართი გახსენი Chrome-ში ან Edge-ში და გამოიყენე „Install app“.
+
+### უსაფრთხოება
+- **წვდომა:** მხოლოდ შენს Tailscale ქსელში, ინტერნეტიდან სერვერზე არაფერი ჩანს. სერვერი მხოლოდ `127.0.0.1`-ზე უსმენს.
+- **შესვლა:** პაროლი (scrypt hash) და 2FA. 5 წარუმატებელი ცდის შემდეგ შესვლა 15 წუთით იბლოკება.
+- **Cookie:** HttpOnly და SameSite=Strict, ასევე CSRF და CSP დაცვა. „გასვლა ყველგან“ ყველა სესიას აუქმებს.
+- **ისტორია:** ჩატის ისტორია მხოლოდ შენს ტელეფონზე ინახება. ⚙️ → „საუბრის გასუფთავება“ მას შლის.
+
 ## ინსტალაცია
 
 საჭიროა Python 3.10 ან უფრო ახალი.
@@ -149,7 +209,10 @@ devices:
 ## გაშვება
 
 ```bash
-# Telegram ბოტი
+# აპი + მონიტორინგი + Telegram (რეკომენდებული)
+python -m netagent serve
+
+# მხოლოდ Telegram ბოტი (აპის გარეშე)
 python -m netagent.telegram_bot
 
 # ტერმინალი: ინტერაქტიული ჩატი
@@ -267,6 +330,12 @@ network-agent/
 │   ├── history.py        # latency ისტორია
 │   ├── charts.py         # გრაფიკები (PNG)
 │   ├── notes.py          # შენიშვნები მოწყობილობებზე
+│   ├── commands.py       # სწრაფი ბრძანებები (Telegram + აპი)
+│   ├── monitoring.py     # ალერტები და განრიგი
+│   ├── services.py       # საერთო ობიექტები
+│   ├── content.py        # ფოტო/ფაილი → Claude
+│   ├── server.py         # აპი + მონიტორინგი + Telegram ერთ პროცესში
+│   └── web/              # აპი: FastAPI, login/2FA, push, PWA (static/)
 │   ├── audit.py
 │   ├── config.py
 │   └── tools/
@@ -302,6 +371,9 @@ network-agent/
 | `NETAGENT_CONFIG_WATCH_INTERVAL` | `60` | config ცვლილებების შემოწმება წუთებში (`0` = გამორთული) |
 | `NETAGENT_DAILY_BUDGET` | `0` | დღიური AI ლიმიტი $-ში (`0` = ლიმიტის გარეშე) |
 | `NETAGENT_DATA_DIR` | `data` | მდგომარეობა (დადუმებები, ხარჯი, შენიშვნები, latency ისტორია) |
+| `NETAGENT_WEB_HOST` / `NETAGENT_WEB_PORT` | `127.0.0.1` / `8080` | აპის მისამართი (Tailscale-ისთვის ასე დატოვე) |
+| `NETAGENT_WEB_PASSWORD` | — | აპის პაროლი, თუ `web-setup` არ გამოგიყენებია |
+| `NETAGENT_TELEGRAM` | `on` | Telegram-ის ჩართვა/გამორთვა `serve`-ში |
 | `NETAGENT_DEEP_MONITOR_INTERVAL` | `5` | `watch`-იანი მოწყობილობების შემოწმება წუთებში (`0` = გამორთული) |
 
 ## ტესტები
@@ -327,12 +399,12 @@ docker compose logs -f        # ლოგები
 ```ini
 # /etc/systemd/system/netagent.service
 [Unit]
-Description=NetAgent Telegram bot
+Description=NetAgent (app + monitoring + Telegram)
 After=network-online.target
 
 [Service]
 WorkingDirectory=/opt/network-agent
-ExecStart=/opt/network-agent/.venv/bin/python -m netagent.telegram_bot
+ExecStart=/opt/network-agent/.venv/bin/python -m netagent.server
 Restart=always
 User=netagent
 

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ka">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#2a78d6">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <title>NetAgent</title>
+</head>
+<body>
+  <!-- Login -->
+  <main id="login" class="login" hidden>
+    <img src="/static/icon-192.png" alt="" class="login-logo" width="72" height="72">
+    <h1>NetAgent</h1>
+    <p class="muted">ქსელის ასისტენტი</p>
+    <form id="login-form" autocomplete="on">
+      <label for="password">პაროლი</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <div id="totp-row" hidden>
+        <label for="totp">2FA კოდი (Google Authenticator)</label>
+        <input id="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7">
+      </div>
+      <button type="submit" class="primary">შესვლა</button>
+      <p id="login-error" class="error" role="alert"></p>
+      <p id="login-setup" class="muted small" hidden>
+        პაროლი ჯერ არ არის დაყენებული. სერვერზე გაუშვი:<br><code>python -m netagent web-setup</code>
+      </p>
+    </form>
+  </main>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand"><img src="/static/icon-192.png" alt="" width="28" height="28"><span>NetAgent</span></div>
+      <button id="netsum" class="pill" type="button" title="ქსელის სტატუსი">…</button>
+    </header>
+
+    <section id="view-chat" class="view">
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <div id="quick" class="quick"></div>
+      <div id="attachments" class="attachments"></div>
+      <form id="composer" class="composer">
+        <label class="icon-btn" title="ფოტო ან ფაილი">
+          <span aria-hidden="true">📎</span>
+          <input id="file" type="file" multiple accept="image/*,.txt,.cfg,.conf,.log,.csv,.rsc,.json,text/*" hidden>
+        </label>
+        <textarea id="input" rows="1" placeholder="დაწერე კითხვა ან /status" enterkeyhint="send"></textarea>
+        <button id="send" class="send" type="submit" aria-label="გაგზავნა">➤</button>
+      </form>
+    </section>
+
+    <section id="view-dash" class="view scroll" hidden>
+      <div class="dash-head">
+        <div>
+          <div id="dash-summary" class="big">…</div>
+          <div id="dash-sub" class="muted small"></div>
+        </div>
+        <button id="dash-refresh" class="icon-btn" type="button" aria-label="განახლება">🔄</button>
+      </div>
+      <div class="actions" id="dash-actions"></div>
+      <h2>მოწყობილობები</h2>
+      <div id="devices" class="devices"></div>
+      <h2>ბოლო ალერტები</h2>
+      <div id="alerts" class="alerts"></div>
+    </section>
+
+    <section id="view-settings" class="view scroll" hidden>
+      <div class="card">
+        <h2>🔔 შეტყობინებები</h2>
+        <p class="muted small" id="push-status">…</p>
+        <div class="row">
+          <button id="push-toggle" type="button" class="primary">ჩართვა</button>
+          <button id="push-test" type="button">სატესტო</button>
+        </div>
+      </div>
+      <div class="card" id="install-card" hidden>
+        <h2>📲 აპის დაინსტალირება</h2>
+        <p class="muted small">დაამატე NetAgent მთავარ ეკრანზე, როგორც ჩვეულებრივი აპი.</p>
+        <button id="install" type="button" class="primary">დაინსტალირება</button>
+      </div>
+      <div class="card">
+        <h2>💰 AI ხარჯი</h2>
+        <div id="usage" class="md muted small">…</div>
+      </div>
+      <div class="card">
+        <h2>💬 საუბარი</h2>
+        <div class="row">
+          <button id="clear-chat" type="button">საუბრის გასუფთავება</button>
+          <button id="help" type="button">ბრძანებები</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>🔐 ანგარიში</h2>
+        <div class="row">
+          <button id="logout" type="button">გასვლა</button>
+          <button id="logout-all" type="button" class="danger">გასვლა ყველგან</button>
+        </div>
+        <p class="muted small" id="about"></p>
+      </div>
+    </section>
+
+    <nav class="tabbar">
+      <button type="button" data-view="chat" class="active"><span aria-hidden="true">💬</span>ჩატი</button>
+      <button type="button" data-view="dash"><span aria-hidden="true">📊</span>ქსელი</button>
+      <button type="button" data-view="settings"><span aria-hidden="true">⚙️</span>პარამეტრები</button>
+    </nav>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
