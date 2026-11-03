@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from datetime import time as dtime
 from pathlib import Path
 from typing import Any
@@ -26,17 +27,24 @@ from telegram.ext import (
 )
 
 from .agent import NetAgent, Reply
-from .formatting import first_line
+from .alerts import ALL, AlertMutes, format_duration, parse_duration
+from .audit import log_event
 from .config import settings
-from .formatting import markdown_to_telegram_html, split_markdown
+from .formatting import first_line, markdown_to_telegram_html, split_markdown
 from .health import ReachabilityMonitor, check_many
-from .security import mask_secrets
+from .inventory import InventoryError
+from .security import CommandRejected, mask_secrets, validate_command
+from .state import StateStore
+from .tools import device as dev
 from .tools.extract import extract_network_data
+from .usage import UsageTracker
 
 log = logging.getLogger("netagent.telegram")
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_FILE_CHARS_TO_MODEL = 60_000
+MAX_INLINE_CMD_OUTPUT = 3500
+DEFAULT_MUTE = 3600
 
 HELP_TEXT = """\
 🤖 <b>NetAgent</b> — ქსელის ასისტენტი (მხოლოდ წაკითხვის რეჟიმი)
@@ -44,27 +52,38 @@ HELP_TEXT = """\
 უბრალოდ მომწერე, მაგალითად:
 • <code>R1-ის ინტერფეისების IP-ები მაჩვენე</code>
 • <code>192.168.1.57 სადაა ჩართული?</code>
-• <code>რომელ მოწყობილობაზეა 10.10.0.0/24?</code>
+• <code>რომელი IP-ებია თავისუფალი 192.168.10.0/24-ში?</code>
 • <code>ყველა მოწყობილობის OS ვერსია Excel-ში</code>
 • <code>რა შეიცვალა SW-Core-1-ის კონფიგში?</code>
-• <code>10.0.0.0/22 დაყავი /26-ებად</code>
+• <code>რამდენად უსაფრთხოა ქსელი?</code>
+• <code>ping R1-დან 8.8.8.8-მდე</code>
 
 📄 ატვირთე config ან log ფაილი და ამოვიღებ IP-ებს, VLAN-ებს, ინტერფეისებს.
 
-ბრძანებები:
+<b>სწრაფი ბრძანებები (AI-ს გარეშე, უფასო):</b>
 /menu — ღილაკები
 /status — რომელი მოწყობილობაა ჩართული/გათიშული
-/backup — ყველა config-ის backup
+/cmd R1 show ip route — ბრძანება პირდაპირ მოწყობილობაზე
+/cmd all show clock — ყველა მოწყობილობაზე
+/audit — უსაფრთხოების აუდიტი
+/backup — config-ების backup
 /report — ქსელის რეპორტი
+/mute R1 2h — ალერტების დადუმება (/mute all 30m)
+/unmute R1 — დადუმების მოხსნა
+/usage — AI ხარჯი
 /devices — მოწყობილობების სია
-/reset — საუბრის თავიდან დაწყება
-/id — შენი Telegram ID"""
+/reset — საუბრის თავიდან დაწყება"""
 
 BOT_COMMANDS = [
     BotCommand("menu", "ღილაკების მენიუ"),
     BotCommand("status", "მოწყობილობების სტატუსი (up/down)"),
+    BotCommand("cmd", "show ბრძანება: /cmd R1 show ip route"),
+    BotCommand("audit", "უსაფრთხოების აუდიტი"),
     BotCommand("report", "ქსელის რეპორტი"),
     BotCommand("backup", "config-ების backup"),
+    BotCommand("mute", "ალერტების დადუმება: /mute R1 2h"),
+    BotCommand("unmute", "დადუმების მოხსნა: /unmute R1"),
+    BotCommand("usage", "AI ხარჯი"),
     BotCommand("devices", "მოწყობილობების სია"),
     BotCommand("reset", "საუბრის თავიდან დაწყება"),
     BotCommand("help", "დახმარება და მაგალითები"),
@@ -79,7 +98,11 @@ MENU = InlineKeyboardMarkup(
         ],
         [
             InlineKeyboardButton("📊 რეპორტი", callback_data="report"),
+            InlineKeyboardButton("🛡 აუდიტი", callback_data="audit"),
+        ],
+        [
             InlineKeyboardButton("💾 Backup", callback_data="backup"),
+            InlineKeyboardButton("💰 ხარჯი", callback_data="usage"),
         ],
         [
             InlineKeyboardButton("🌐 ყველა IP → Excel", callback_data="ask:all_ips"),
@@ -90,10 +113,18 @@ MENU = InlineKeyboardMarkup(
             InlineKeyboardButton("🔗 Neighbors", callback_data="ask:neighbors"),
         ],
         [
+            InlineKeyboardButton("🔕 დადუმებული", callback_data="mutes"),
             InlineKeyboardButton("❓ მაგალითები", callback_data="help"),
             InlineKeyboardButton("🔄 თავიდან", callback_data="reset"),
         ],
     ]
+)
+
+FOLLOWUP = InlineKeyboardMarkup(
+    [[
+        InlineKeyboardButton("🔄 განახლება", callback_data="fu:refresh"),
+        InlineKeyboardButton("📊 Excel-ად", callback_data="fu:excel"),
+    ]]
 )
 
 QUICK_QUESTIONS = {
@@ -104,6 +135,7 @@ QUICK_QUESTIONS = {
     "აღნიშნე). მოკლედ, მოწყობილობების მიხედვით დაჯგუფებული.",
     "neighbors": "ყველა მოწყობილობის CDP/LLDP neighbor-ები: ვინ ვისთანაა მიერთებული და რომელი პორტებით.",
 }
+EXCEL_FOLLOWUP = "წინა პასუხის მონაცემები გამომიგზავნე Excel ფაილად (export_excel). ჩატში მხოლოდ მოკლე შეჯამება."
 
 _TOOL_LABELS = {
     "list_devices": "📋 მოწყობილობების სია",
@@ -121,6 +153,8 @@ _TOOL_LABELS = {
     "backup_configs": "💾 backup{filter_s}",
     "config_changes": "📝 {device}: ცვლილებები",
     "export_excel": "📊 Excel: {filename}",
+    "security_audit": "🛡 აუდიტი{filter_s}",
+    "subnet_usage": "🔢 IP-ები: {network}",
 }
 
 
@@ -133,8 +167,12 @@ def _describe_tool(name: str, args: dict[str, Any]) -> str:
         return f"🔧 {name}"
 
 
-agent: NetAgent  # created in main() so importing this module needs no API key
+# Created in main() so importing this module needs no API key and touches no files.
+agent: NetAgent
+mutes: AlertMutes
+usage: UsageTracker
 monitor = ReachabilityMonitor()
+_last_question: dict[int, Any] = {}
 
 
 def _is_allowed(update: Update) -> bool:
@@ -175,13 +213,28 @@ async def send_files(message: Message, files: list[Path]) -> None:
             await message.reply_text(f"⚠️ ფაილის გაგზავნა ვერ მოხერხდა: {path.name} ({exc})")
 
 
-async def _broadcast(app: Application, text: str) -> None:
+async def _broadcast(app: Application, text: str, reply_markup=None) -> None:
+    chunks = split_markdown(text)
     for uid in settings.telegram_allowed_users:
-        for chunk in split_markdown(text):
+        for i, chunk in enumerate(chunks):
+            markup = reply_markup if i == len(chunks) - 1 else None
             try:
-                await app.bot.send_message(uid, markdown_to_telegram_html(chunk), parse_mode=ParseMode.HTML)
+                await app.bot.send_message(
+                    uid, markdown_to_telegram_html(chunk), parse_mode=ParseMode.HTML, reply_markup=markup
+                )
             except Exception:  # noqa: BLE001 - user may have never started the bot
                 log.warning("could not message user %s", uid)
+
+
+def _mute_buttons(devices: list[str]) -> InlineKeyboardMarkup | None:
+    rows = []
+    for name in devices[:6]:
+        data = f"mute:{name}:{DEFAULT_MUTE}"
+        if len(data.encode()) <= 64:  # Telegram callback_data limit
+            rows.append([InlineKeyboardButton(f"🔕 {name} — 1 სთ", callback_data=data)])
+    if len(devices) > 1:
+        rows.append([InlineKeyboardButton("🔕 ყველა — 1 სთ", callback_data=f"mute:{ALL}:{DEFAULT_MUTE}")])
+    return InlineKeyboardMarkup(rows) if rows else None
 
 
 async def _typing_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stop: asyncio.Event) -> None:
@@ -196,9 +249,11 @@ async def _typing_loop(context: ContextTypes.DEFAULT_TYPE, chat_id: int, stop: a
             pass
 
 
-async def _ask_agent(update: Update, context: ContextTypes.DEFAULT_TYPE, content: Any) -> None:
+async def _ask_agent(update: Update, context: ContextTypes.DEFAULT_TYPE, content: Any, remember: bool = True) -> None:
     message = update.effective_message
     chat_id = update.effective_chat.id
+    if remember:
+        _last_question[chat_id] = content
     loop = asyncio.get_running_loop()
     status = await message.reply_text("⏳ ვამუშავებ...")
     steps: list[str] = []
@@ -237,7 +292,9 @@ async def _ask_agent(update: Update, context: ContextTypes.DEFAULT_TYPE, content
         await status.delete()
     except Exception:  # noqa: BLE001
         pass
-    await send_markdown(message, reply.text)
+    # Follow-up buttons only on real answers that did not already produce a file.
+    followup = FOLLOWUP if steps and not reply.files and not reply.text.startswith(("⚠️", "💰")) else None
+    await send_markdown(message, reply.text, reply_markup=followup)
     await send_files(message, reply.files)
 
 
@@ -255,7 +312,8 @@ def _format_status() -> str:
     for r in sorted(results, key=lambda r: (r.up, r.device)):
         mark = "🟢" if r.up else "🔴"
         extra = f"{r.latency_ms:.0f}ms" if r.up and r.latency_ms is not None else r.reason
-        lines.append(f"{mark} {r.device:<14} {r.host:<15} {extra}")
+        muted = " 🔕" if mutes.is_muted(r.device) else ""
+        lines.append(f"{mark} {r.device:<14} {r.host:<15} {extra}{muted}")
     lines.append("```")
     return "\n".join(lines)
 
@@ -298,7 +356,17 @@ def _run_backup() -> str:
 def _run_report() -> str:
     from .report import build_report
 
-    return build_report(agent.inventory())
+    return build_report(agent.inventory(), mutes=mutes, usage=usage)
+
+
+def _run_audit() -> str:
+    from .compliance import format_findings
+    from .report import run_security_audit
+
+    results, duplicates, errors = run_security_audit(agent.inventory())
+    if not results and not errors:
+        return "inventory ცარიელია."
+    return format_findings(results, duplicates, errors)
 
 
 _ACTIONS = {
@@ -306,6 +374,9 @@ _ACTIONS = {
     "devices": (None, _format_devices),
     "backup": ("💾 ვიღებ backup-ს...", _run_backup),
     "report": ("📊 ვამზადებ რეპორტს...", _run_report),
+    "audit": ("🛡 ვამოწმებ კონფიგურაციებს...", _run_audit),
+    "usage": (None, lambda: usage.summary()),
+    "mutes": (None, lambda: mutes.describe()),
 }
 
 
@@ -323,6 +394,53 @@ async def _run_action(message: Message, action: str) -> None:
         except Exception:  # noqa: BLE001
             pass
     await send_markdown(message, text)
+
+
+def run_cmd(target: str, command: str, user: str) -> tuple[str, Path | None]:
+    """/cmd: run one read-only command on a device, a filter match, or all devices."""
+    inv = agent.inventory()
+    if target.lower() in {"all", "*", "ყველა"}:
+        devices = list(inv.devices.values())
+    else:
+        try:
+            devices = [inv.get(target)]
+        except InventoryError:
+            devices = inv.filter(target)
+            if not devices:
+                raise
+    for d in devices:
+        validate_command(command, d.device_type)
+
+    results = dev.run_on_devices(
+        inv, devices, lambda d: dev.run_commands(inv, d, [command], parse=False, max_chars=200_000)
+    )
+    for d in devices:
+        r = results[d.name]
+        ok = isinstance(r, list) and bool(r) and "error" not in r[0]
+        log_event(settings.audit_log_path, user=user, tool="telegram_cmd",
+                  args={"device": d.name, "command": command}, ok=ok, device_access=True)
+
+    parts = []
+    for name, r in results.items():
+        if isinstance(r, dict) and "error" in r:
+            parts.append(f"⚠️ {name}: {first_line(r['error'])}")
+            continue
+        res = r[0]
+        body = res.get("output") if "output" in res else f"⚠️ {first_line(res.get('error', ''))}"
+        parts.append(f"📟 **{name}** › `{command}`\n```\n{(body or '(ცარიელი)').rstrip()}\n```")
+    text = "\n\n".join(parts)
+    if len(text) <= MAX_INLINE_CMD_OUTPUT:
+        return text, None
+
+    settings.export_dir.mkdir(parents=True, exist_ok=True)
+    path = settings.export_dir / f"cmd-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+    plain = "\n\n".join(
+        f"===== {name}: {command} =====\n"
+        + ((r[0].get("output") or r[0].get("error", "")) if isinstance(r, list) else r.get("error", ""))
+        for name, r in results.items()
+    )
+    path.write_text(plain, encoding="utf-8")
+    return f"📟 `{command}` — {len(devices)} მოწყობილობა, output დიდია, გიგზავნი ფაილად.", path
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +467,76 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update):
         return await _deny(update)
     agent.reset(f"tg:{update.effective_chat.id}")
+    _last_question.pop(update.effective_chat.id, None)
     await update.effective_message.reply_text("🔄 საუბარი თავიდან დაიწყო.")
+
+
+async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    message = update.effective_message
+    args = context.args or []
+    if len(args) < 2:
+        return await message.reply_text(
+            "გამოყენება:\n/cmd R1 show ip interface brief\n/cmd all show clock\n/cmd HQ show version"
+        )
+    target, command = args[0], " ".join(args[1:])
+    note = await message.reply_text(f"💻 {target}: {command} ...")
+    try:
+        text, path = await asyncio.to_thread(run_cmd, target, command, f"telegram:{update.effective_user.id}")
+    except (CommandRejected, InventoryError) as exc:
+        text, path = f"⛔ {exc}", None
+    except Exception as exc:  # noqa: BLE001
+        log.exception("/cmd failed")
+        text, path = f"⚠️ {first_line(str(exc))}", None
+    try:
+        await note.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await send_markdown(message, text)
+    if path:
+        await send_files(message, [path])
+
+
+def _mute_target(name: str) -> str:
+    if name.lower() in {"all", "*", "ყველა"}:
+        return ALL
+    return agent.inventory().get(name).name  # raises InventoryError for unknown devices
+
+
+async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "გამოყენება: /mute R1 2h  ·  /mute all 30m  ·  /mute R1 (1 სთ)\n\n" + mutes.describe()
+        )
+    try:
+        target = _mute_target(args[0])
+        seconds = parse_duration(args[1]) if len(args) > 1 else DEFAULT_MUTE
+    except (InventoryError, ValueError) as exc:
+        return await update.effective_message.reply_text(f"⚠️ {exc}")
+    mutes.mute(target, seconds)
+    name = "ყველა მოწყობილობა" if target == ALL else target
+    await update.effective_message.reply_text(f"🔕 {name}: ალერტები დადუმებულია {format_duration(seconds)}-ით.")
+
+
+async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    args = context.args or []
+    if not args or args[0].lower() in {"all", "*", "ყველა"}:
+        mutes.unmute_all()
+        return await update.effective_message.reply_text("🔔 ყველა დადუმება მოიხსნა.")
+    try:
+        target = _mute_target(args[0])
+    except InventoryError as exc:
+        return await update.effective_message.reply_text(f"⚠️ {exc}")
+    existed = mutes.unmute(target)
+    await update.effective_message.reply_text(
+        f"🔔 {target}: დადუმება მოიხსნა." if existed else f"{target} დადუმებული არ იყო."
+    )
 
 
 def _action_command(action: str):
@@ -366,17 +553,36 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update):
         await query.answer("⛔ წვდომა არ გაქვს", show_alert=True)
         return
-    await query.answer()
     data = query.data or ""
+    chat_id = update.effective_chat.id
+
+    if data.startswith("mute:"):
+        target, _, secs = data[len("mute:"):].rpartition(":")
+        if not target or not secs.isdigit():
+            return await query.answer()
+        mutes.mute(target, int(secs))
+        name = "ყველა" if target == ALL else target
+        await query.answer(f"🔕 {name} დადუმდა {format_duration(int(secs))}-ით")
+        await query.message.reply_text(f"🔕 {name}: ალერტები დადუმებულია {format_duration(int(secs))}-ით. მოხსნა: /unmute")
+        return
+
+    await query.answer()
     if data in _ACTIONS:
         await _run_action(query.message, data)
     elif data == "help":
         await query.message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML)
     elif data == "reset":
-        agent.reset(f"tg:{update.effective_chat.id}")
+        agent.reset(f"tg:{chat_id}")
+        _last_question.pop(chat_id, None)
         await query.message.reply_text("🔄 საუბარი თავიდან დაიწყო.")
     elif data.startswith("ask:") and data[4:] in QUICK_QUESTIONS:
         await _ask_agent(update, context, QUICK_QUESTIONS[data[4:]])
+    elif data == "fu:refresh":
+        if chat_id not in _last_question:
+            return await query.message.reply_text("გასამეორებელი კითხვა არ მაქვს.")
+        await _ask_agent(update, context, _last_question[chat_id])
+    elif data == "fu:excel":
+        await _ask_agent(update, context, EXCEL_FOLLOWUP, remember=False)
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -424,15 +630,6 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 # Scheduled jobs
 # ---------------------------------------------------------------------------
 
-def _format_duration(seconds: float | None) -> str:
-    if not seconds:
-        return ""
-    minutes = int(seconds // 60)
-    if minutes < 60:
-        return f"{minutes} წთ"
-    return f"{minutes // 60} სთ {minutes % 60} წთ"
-
-
 async def job_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         inv = agent.inventory()
@@ -441,7 +638,7 @@ async def job_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("monitor check failed")
         return
     downtimes = {r.device: monitor.down_duration(r.device) for r in results if r.up}
-    changes = monitor.update(results)
+    changes = [(r, s) for r, s in monitor.update(results) if not mutes.is_muted(r.device)]
     if not changes:
         return
     lines = []
@@ -449,9 +646,55 @@ async def job_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
         if state == "down":
             lines.append(f"🔴 **{r.device}** ({r.host}) მიუწვდომელია — {r.reason}")
         else:
-            took = _format_duration(downtimes.get(r.device))
-            lines.append(f"🟢 **{r.device}** ({r.host}) ისევ ხელმისაწვდომია" + (f" (გათიშული იყო {took})" if took else ""))
-    await _broadcast(context.application, "🚨 **ალერტი**\n" + "\n".join(lines))
+            took = downtimes.get(r.device)
+            lines.append(
+                f"🟢 **{r.device}** ({r.host}) ისევ ხელმისაწვდომია"
+                + (f" (გათიშული იყო {format_duration(took)})" if took else "")
+            )
+    down = [r.device for r, s in changes if s == "down"]
+    await _broadcast(context.application, "🚨 **ალერტი**\n" + "\n".join(lines), _mute_buttons(down))
+
+
+def _diff_snippet(diff: str, max_lines: int = 15) -> str:
+    changed = [
+        ln for ln in diff.splitlines()
+        if (ln.startswith("+") or ln.startswith("-")) and not ln.startswith(("+++", "---"))
+    ]
+    more = len(changed) - max_lines
+    return "\n".join(changed[:max_lines]) + (f"\n... (+{more} ხაზი)" if more > 0 else "")
+
+
+def detect_config_changes() -> list[dict]:
+    """Back up reachable devices; return the ones whose configuration changed."""
+    from .backup import BackupStore, backup_devices
+
+    inv = agent.inventory()
+    devices = list(inv.devices.values())
+    reachable = [inv.devices[r.device] for r in check_many(devices) if r.up]
+    if not reachable:
+        return []
+    results = backup_devices(inv, reachable, BackupStore(settings.backup_dir))
+    return [
+        {"device": name, **r}
+        for name, r in results.items()
+        if r.get("saved") and not r.get("first_backup") and r.get("diff")
+    ]
+
+
+async def job_config_watch(context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        changes = await asyncio.to_thread(detect_config_changes)
+    except Exception:  # noqa: BLE001
+        log.exception("config watch failed")
+        return
+    changes = [c for c in changes if not mutes.is_muted(c["device"])]
+    for c in changes:
+        text = (
+            f"📝 **{c['device']}**: კონფიგურაცია შეიცვალა (+{c.get('added', 0)} / −{c.get('removed', 0)})\n"
+            f"```\n{_diff_snippet(c['diff'])}\n```\n"
+            f"ახსნისთვის მკითხე: „რა შეიცვალა {c['device']}-ზე?“"
+        )
+        await _broadcast(context.application, text, _mute_buttons([c["device"]]))
 
 
 async def job_daily_report(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -486,12 +729,26 @@ async def _post_init(app: Application) -> None:
         return
     if settings.monitor_interval > 0:
         jq.run_repeating(job_monitor, interval=settings.monitor_interval * 60, first=20, name="monitor")
-        log.info("monitoring every %s min", settings.monitor_interval)
+        log.info("reachability monitoring every %s min", settings.monitor_interval)
+    if settings.config_watch_interval > 0:
+        jq.run_repeating(
+            job_config_watch, interval=settings.config_watch_interval * 60, first=90, name="config_watch"
+        )
+        log.info("config change detection every %s min", settings.config_watch_interval)
     hhmm = _parse_hhmm(settings.daily_report_time) if settings.daily_report_time else None
     if hhmm:
         tz = ZoneInfo(settings.timezone)
         jq.run_daily(job_daily_report, time=dtime(hhmm[0], hhmm[1], tzinfo=tz), name="daily_report")
         log.info("daily report at %02d:%02d %s", hhmm[0], hhmm[1], settings.timezone)
+
+
+def init_services() -> None:
+    """Create the agent and persistent state (separate from main() for testing)."""
+    global agent, mutes, usage
+    state = StateStore(settings.data_dir / "state.json")
+    mutes = AlertMutes(state)
+    usage = UsageTracker(state, settings.daily_budget_usd)
+    agent = NetAgent(usage=usage)
 
 
 def main() -> None:
@@ -504,9 +761,7 @@ def main() -> None:
             "TELEGRAM_ALLOWED_USERS ცარიელია — ბოტი ყველას უარს ეტყვის. "
             "მიწერე ბოტს /id, შემდეგ ჩაწერე ID .env-ში და გადატვირთე."
         )
-
-    global agent
-    agent = NetAgent()
+    init_services()
 
     app = (
         Application.builder()
@@ -519,6 +774,9 @@ def main() -> None:
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("cmd", cmd_cmd))
+    app.add_handler(CommandHandler("mute", cmd_mute))
+    app.add_handler(CommandHandler("unmute", cmd_unmute))
     for action in _ACTIONS:
         app.add_handler(CommandHandler(action, _action_command(action)))
     app.add_handler(CallbackQueryHandler(on_button))

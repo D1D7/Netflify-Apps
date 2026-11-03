@@ -14,6 +14,7 @@ import anthropic
 from .config import settings
 from .inventory import Inventory
 from .tools import TOOL_SCHEMAS, ToolContext, execute_tool
+from .usage import UsageTracker
 
 MAX_STEPS = 20  # max model calls per user message
 MAX_MAX_TOKENS = 16000
@@ -38,6 +39,9 @@ the predefined data types do not cover, in the device's own CLI syntax.
 on anything abnormal (interfaces down, errors, duplicate IPs, missing routes).
 - Mention which device and command the data came from when it is not obvious.
 - "What changed?" questions: call backup_configs for the device(s) to capture the current state, then config_changes, and explain the diff in plain words (what was added/removed and its impact).
+- Security questions ("is the network secure?", "audit"): call security_audit, then explain the most important findings first with the exact fix commands for that platform.
+- Free/used IP questions: call subnet_usage. Remind that an address missing from ARP may still belong to a powered-off or static device.
+- To test reachability *from a device* (e.g. ping from R1 to 8.8.8.8), use run_show_command with that device's ping/traceroute syntax; the ping/traceroute tools run from the agent's own server.
 - Exports: when the user asks for Excel/a file/an export, or a table is too large for chat, collect the data with tools and call export_excel. The file is delivered automatically; in your answer give only a short summary, not the full table again.
 - Everything is read-only. Configuration changes are not possible in this version: if the user \
 asks for a change, write the exact commands they could apply themselves, explain the impact and \
@@ -81,8 +85,11 @@ class _Session:
 
 
 class NetAgent:
-    def __init__(self, client: anthropic.Anthropic | None = None) -> None:
+    def __init__(
+        self, client: anthropic.Anthropic | None = None, usage: UsageTracker | None = None
+    ) -> None:
         self.client = client or anthropic.Anthropic(max_retries=3)
+        self.usage = usage
         self._sessions: dict[str, _Session] = defaultdict(_Session)
         self._sessions_lock = threading.Lock()
         self._inventory: Inventory | None = None
@@ -119,6 +126,8 @@ class NetAgent:
         channel: str = "cli",
         on_tool: ProgressCallback | None = None,
     ) -> Reply:
+        if self.usage and self.usage.over_budget():
+            return Reply(self._budget_message())
         session = self._session(session_id)
         with session.lock:
             notice = ""
@@ -132,6 +141,13 @@ class NetAgent:
                 return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
             text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)
             return Reply(text, [f for f in ctx.files if f.exists()])
+
+    def _budget_message(self) -> str:
+        budget = self.usage.daily_budget_usd if self.usage else 0
+        return (
+            f"💰 დღიური AI ბიუჯეტი (${budget:.2f}) ამოიწურა. ხვალ განახლდება, ან გაზარდე "
+            "NETAGENT_DAILY_BUDGET .env-ში. /status, /backup, /report, /audit და /cmd ისევ მუშაობს."
+        )
 
     def _run_turn(
         self,
@@ -155,7 +171,9 @@ class NetAgent:
 
         system = _BASE_PROMPT + _CHANNEL_FORMAT.get(channel, "")
         response = None
-        for _ in range(MAX_STEPS):
+        for step in range(MAX_STEPS):
+            if step and self.usage and self.usage.over_budget():
+                return self._budget_message()
             try:
                 response = self.client.beta.messages.create(
                     model=settings.model,
@@ -182,6 +200,8 @@ class NetAgent:
                 return "⚠️ Anthropic API-სთან კავშირი ვერ დამყარდა."
 
             usage = response.usage
+            if self.usage:
+                self.usage.record(getattr(response, "model", None) or settings.model, usage)
             if usage and (
                 usage.input_tokens
                 + (usage.cache_read_input_tokens or 0)

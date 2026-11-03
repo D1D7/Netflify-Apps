@@ -183,6 +183,20 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             ["filename", "sheets"],
         ),
     },
+    {
+        "name": "security_audit",
+        "description": "უსაფრთხოების/best-practice აუდიტი config-ებზე (telnet, სუსტი SNMP, HTTP, NTP, syslog, "
+        "AAA, VTY ACL...) + დუბლირებული IP მისამართების ძებნა ყველა მოწყობილობაზე. ჯერ იღებს ახალ "
+        "backup-ს. აბრუნებს ნაპოვნ პრობლემებს სიმძიმით და გამოსწორების ბრძანებებით.",
+        "input_schema": _obj({"filter": _FILTER}, []),
+    },
+    {
+        "name": "subnet_usage",
+        "description": "ქსელში (მაგ. 192.168.10.0/24) დაკავებული და თავისუფალი IP-ები: აგროვებს ყველა "
+        "მოწყობილობის ARP და ინტერფეისის ცხრილებიდან. პასუხობს: 'რომელი IP-ებია თავისუფალი?', "
+        "'რამდენი IP-ა დაკავებული VLAN 10-ში?'. მაქსიმუმ /20.",
+        "input_schema": _obj({"network": {"type": "string"}, "filter": _FILTER}, ["network"]),
+    },
 ]
 
 DEVICE_TOOLS = {
@@ -192,6 +206,8 @@ DEVICE_TOOLS = {
     "find_on_network",
     "device_config_summary",
     "backup_configs",
+    "security_audit",
+    "subnet_usage",
 }
 
 
@@ -269,7 +285,11 @@ def _backup_configs(ctx: ToolContext, filter: str = "") -> Any:
     devices = ctx.inventory.filter(filter)
     if not devices:
         return {"error": "მოწყობილობები ვერ მოიძებნა"}
-    return backup_devices(ctx.inventory, devices, BackupStore(settings.backup_dir))
+    results = backup_devices(ctx.inventory, devices, BackupStore(settings.backup_dir))
+    for r in results.values():
+        if len(r.get("diff", "")) > 3000:
+            r["diff"] = r["diff"][:3000] + "\n... [სრული diff: config_changes]"
+    return results
 
 
 MAX_DIFF_CHARS = 8000
@@ -299,6 +319,30 @@ def _export_excel(ctx: ToolContext, filename: str, sheets: list) -> Any:
     return {"file": path.name, "sheets": len(sheets), "rows": rows, "status": "ფაილი შეიქმნა და მომხმარებელს გაეგზავნება"}
 
 
+def _security_audit(ctx: ToolContext, filter: str = "") -> Any:
+    from ..report import run_security_audit
+
+    devices = ctx.inventory.filter(filter)
+    if not devices:
+        return {"error": "მოწყობილობები ვერ მოიძებნა"}
+    results, duplicates, errors = run_security_audit(ctx.inventory, devices)
+    return {
+        "findings": {
+            name: (None if fs is None else [f.as_dict() for f in fs]) for name, fs in results.items()
+        },
+        "duplicate_ips": duplicates,
+        "errors": errors,
+        "note": "null = ამ პლატფორმისთვის წესები არ არის; [] = პრობლემა არ მოიძებნა",
+    }
+
+
+def _subnet_usage(ctx: ToolContext, network: str, filter: str = "") -> Any:
+    devices = ctx.inventory.filter(filter)
+    if not devices:
+        return {"error": "მოწყობილობები ვერ მოიძებნა"}
+    return dev.subnet_usage(ctx.inventory, devices, network)
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "list_devices": lambda ctx, filter="": [d.public_info() for d in ctx.inventory.filter(filter)],
     "get_device_data": _get_device_data,
@@ -315,6 +359,8 @@ _HANDLERS: dict[str, Callable[..., Any]] = {
     "backup_configs": _backup_configs,
     "config_changes": _config_changes,
     "export_excel": _export_excel,
+    "security_audit": _security_audit,
+    "subnet_usage": _subnet_usage,
 }
 
 _SCHEMA_BY_NAME = {t["name"]: t for t in TOOL_SCHEMAS}

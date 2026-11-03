@@ -8,6 +8,10 @@
   python -m netagent.cli backup               # back up all configs
   python -m netagent.cli diff R1 --hours 24   # what changed in R1's config
   python -m netagent.cli report               # daily report
+  python -m netagent.cli audit                # security audit + duplicate IPs
+  python -m netagent.cli ips 10.1.1.0/24      # used / free IPs in a subnet
+  python -m netagent.cli cmd R1 show clock    # run one read-only command (no AI)
+  python -m netagent.cli usage                # AI cost
   python -m netagent.cli extract file.cfg     # offline IP/VLAN extraction, no AI
 """
 
@@ -25,12 +29,18 @@ from rich.table import Table
 
 from .config import settings
 from .formatting import first_line
+from .state import StateStore
+from .usage import UsageTracker
 from .inventory import Inventory
 from .security import mask_secrets
 from .tools.extract import extract_network_data
 
 console = Console()
 MAX_STDIN_CHARS = 60_000
+
+
+def _usage_tracker() -> UsageTracker:
+    return UsageTracker(StateStore(settings.data_dir / "state.json"), settings.daily_budget_usd)
 
 
 def _user() -> str:
@@ -66,7 +76,7 @@ def _content_with_stdin(question: str) -> str | list[dict[str, Any]]:
 def cmd_ask(args: argparse.Namespace) -> int:
     from .agent import NetAgent
 
-    agent = NetAgent()
+    agent = NetAgent(usage=_usage_tracker())
     content = _content_with_stdin(" ".join(args.question))
     with console.status("ვამუშავებ..."):
         reply = agent.chat("cli-oneshot", content, user=_user(), channel="cli", on_tool=_on_tool)
@@ -83,7 +93,7 @@ def _print_reply(reply) -> None:
 def cmd_chat(args: argparse.Namespace) -> int:
     from .agent import NetAgent
 
-    agent = NetAgent()
+    agent = NetAgent(usage=_usage_tracker())
     console.print(
         "[bold]NetAgent[/bold] — ქსელის ასისტენტი (read-only). "
         "[dim]/reset — თავიდან, /devices — სია, /exit — გასვლა[/dim]\n"
@@ -203,6 +213,99 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    from .compliance import format_findings
+    from .report import run_security_audit
+
+    inv = _load_inventory()
+    if inv is None:
+        return 1
+    devices = inv.filter(args.filter or "")
+    with console.status("ვამოწმებ კონფიგურაციებს..."):
+        results, duplicates, errors = run_security_audit(inv, devices, refresh=not args.offline)
+    console.print(Markdown(format_findings(results, duplicates, errors).replace("\n", "  \n")))
+    if args.fix:
+        for name, findings in sorted(results.items()):
+            for f in findings or []:
+                console.print(f"\n[bold]{name}[/bold] — {f.title}")
+                console.print(f.fix, style="green")
+    high = sum(1 for fs in results.values() for f in (fs or []) if f.severity == "high")
+    return 2 if high else 0
+
+
+def cmd_ips(args: argparse.Namespace) -> int:
+    from .tools import device as dev
+
+    inv = _load_inventory()
+    if inv is None:
+        return 1
+    try:
+        with console.status(f"ვაგროვებ ARP/ინტერფეისის ცხრილებს ({args.network})..."):
+            r = dev.subnet_usage(inv, inv.filter(args.filter or ""), args.network)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    console.print(f"[bold]{r['network']}[/bold]: დაკავებული {r['used_count']} / თავისუფალი {r['free_count']} (სულ {r['usable_hosts']})")
+    table = Table(title="დაკავებული")
+    table.add_column("IP")
+    table.add_column("სად ჩანს")
+    for u in r["used"]:
+        table.add_row(u["ip"], ", ".join(u["seen_on"]))
+    console.print(table)
+    console.print("[green]თავისუფალი:[/green] " + ", ".join(r["free_ranges"]))
+    for name, err in r["errors"].items():
+        console.print(f"⚠️ {name}: [red]{first_line(err)}[/red]")
+    console.print(f"[dim]{r['note']}[/dim]")
+    return 0
+
+
+def cmd_cmd(args: argparse.Namespace) -> int:
+    from .audit import log_event
+    from .inventory import InventoryError
+    from .security import CommandRejected, validate_command
+    from .tools import device as dev
+
+    inv = _load_inventory()
+    if inv is None:
+        return 1
+    command = " ".join(args.command)
+    try:
+        if args.target.lower() in {"all", "*"}:
+            devices = list(inv.devices.values())
+        else:
+            try:
+                devices = [inv.get(args.target)]
+            except InventoryError:
+                devices = inv.filter(args.target)
+                if not devices:
+                    raise
+        for d in devices:
+            validate_command(command, d.device_type)
+    except (CommandRejected, InventoryError) as exc:
+        console.print(f"[red]⛔ {exc}[/red]")
+        return 1
+    with console.status(f"{command} → {len(devices)} მოწყობილობა..."):
+        results = dev.run_on_devices(
+            inv, devices, lambda d: dev.run_commands(inv, d, [command], parse=False, max_chars=None)
+        )
+    rc = 0
+    for name, r in results.items():
+        console.rule(f"[bold]{name}[/bold] › {command}")
+        if isinstance(r, dict):
+            console.print(f"[red]{first_line(r.get('error', ''))}[/red]")
+            rc = 1
+        else:
+            console.print(r[0].get("output") or f"[red]{first_line(r[0].get('error', ''))}[/red]", markup=False, highlight=False)
+        log_event(settings.audit_log_path, user=_user(), tool="cli_cmd",
+                  args={"device": name, "command": command}, ok=not isinstance(r, dict), device_access=True)
+    return rc
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    console.print(Markdown(_usage_tracker().summary().replace("\n", "  \n")))
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     from .report import build_report
 
@@ -210,7 +313,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     if inv is None:
         return 1
     with console.status("ვამზადებ რეპორტს..."):
-        text = build_report(inv, run_backup=not args.no_backup)
+        text = build_report(inv, run_backup=not args.no_backup, usage=_usage_tracker())
     console.print(Markdown(text.replace("\n", "  \n")))
     return 0
 
@@ -266,6 +369,17 @@ def main(argv: list[str] | None = None) -> int:
     p_diff = sub.add_parser("diff", help="რა შეიცვალა მოწყობილობის config-ში")
     p_diff.add_argument("device")
     p_diff.add_argument("--hours", type=int, default=24)
+    p_aud = sub.add_parser("audit", help="უსაფრთხოების აუდიტი + დუბლირებული IP-ები")
+    p_aud.add_argument("filter", nargs="?", default="")
+    p_aud.add_argument("--offline", action="store_true", help="მხოლოდ არსებული backup-ებით, მოწყობილობებთან დაკავშირების გარეშე")
+    p_aud.add_argument("--fix", action="store_true", help="გამოსწორების ბრძანებების ჩვენება")
+    p_ips = sub.add_parser("ips", help="დაკავებული/თავისუფალი IP-ები ქსელში")
+    p_ips.add_argument("network")
+    p_ips.add_argument("--filter", default="")
+    p_cmd = sub.add_parser("cmd", help="ერთი read-only ბრძანება (AI-ს გარეშე)")
+    p_cmd.add_argument("target", help="მოწყობილობა, ფილტრი ან all")
+    p_cmd.add_argument("command", nargs="+")
+    sub.add_parser("usage", help="AI ხარჯი")
     p_rep = sub.add_parser("report", help="ქსელის რეპორტი")
     p_rep.add_argument("--no-backup", action="store_true", help="backup-ის გარეშე")
     p_ex = sub.add_parser("extract", help="ფაილიდან IP/VLAN/MAC ამოღება AI-ს გარეშე")
@@ -281,6 +395,10 @@ def main(argv: list[str] | None = None) -> int:
         "backup": cmd_backup,
         "diff": cmd_diff,
         "report": cmd_report,
+        "audit": cmd_audit,
+        "ips": cmd_ips,
+        "cmd": cmd_cmd,
+        "usage": cmd_usage,
         "extract": cmd_extract,
         None: cmd_chat,
     }

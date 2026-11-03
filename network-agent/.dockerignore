@@ -2,6 +2,7 @@
 .venv
 backups
 exports
+data
 logs
 tests
 __pycache__

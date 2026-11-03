@@ -9,5 +9,6 @@ services:
       - ./backups:/app/backups
       - ./exports:/app/exports
       - ./logs:/app/logs
+      - ./data:/app/data
     # Uses the host network so the bot reaches the management network exactly like the host does.
     network_mode: host

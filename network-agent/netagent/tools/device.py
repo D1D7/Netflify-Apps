@@ -266,10 +266,22 @@ def _mask_structured(value: Any) -> Any:
 
 
 def run_on_devices(
-    inventory: Inventory, devices: list[Device], fn
+    inventory: Inventory, devices: list[Device], fn, precheck: bool = True
 ) -> dict[str, Any]:
-    """Run fn(device) on many devices in parallel; collect results/errors by name."""
+    """Run fn(device) on many devices in parallel; collect results/errors by name.
+
+    With several devices, a quick TCP check runs first so unreachable devices fail in
+    seconds instead of each waiting for the full SSH timeout.
+    """
     out: dict[str, Any] = {}
+    if precheck and len(devices) > 1:
+        from ..health import check_many
+
+        reach = {r.device: r for r in check_many(devices, timeout=2.0)}
+        for d in devices:
+            if not reach[d.name].up:
+                out[d.name] = {"error": f"მიუწვდომელია ({reach[d.name].reason})"}
+        devices = [d for d in devices if reach[d.name].up]
     with ThreadPoolExecutor(max_workers=max(1, settings.max_parallel_devices)) as pool:
         futures = {pool.submit(fn, d): d for d in devices}
         for fut, dev in futures.items():
@@ -351,3 +363,83 @@ def search_devices(inventory: Inventory, devices: list[Device], query: str) -> d
         "not_found_on": [k for k, v in results.items() if "matches" in v and not v["matches"]],
         "errors": errors,
     }
+
+
+# ---------------------------------------------------------------------------
+# Subnet usage / free IP finder
+# ---------------------------------------------------------------------------
+
+MAX_USAGE_ADDRESSES = 4096  # /20 for IPv4
+MAX_FREE_LISTED = 40
+
+
+def addresses_in_lines(lines: list[str], network: ipaddress.IPv4Network) -> set[ipaddress.IPv4Address]:
+    found = set()
+    for line in lines:
+        for raw in _IPV4_RE.findall(line):
+            try:
+                ip = ipaddress.ip_interface(raw).ip
+            except ValueError:
+                continue
+            if ip in network:
+                found.add(ip)
+    return found
+
+
+def summarize_usage(network: ipaddress.IPv4Network, used: dict[ipaddress.IPv4Address, set[str]]) -> dict[str, Any]:
+    hosts = list(network.hosts()) if network.prefixlen < 31 else list(network)
+    free = [ip for ip in hosts if ip not in used]
+    return {
+        "network": str(network),
+        "usable_hosts": len(hosts),
+        "used_count": len([ip for ip in used if ip in network]),
+        "free_count": len(free),
+        "used": [{"ip": str(ip), "seen_on": sorted(src)} for ip, src in sorted(used.items())],
+        "free_sample": [str(ip) for ip in free[:MAX_FREE_LISTED]],
+        "free_ranges": _ranges(free)[:20],
+        "note": "თავისუფალი = არც ერთი მოწყობილობის ARP/ინტერფეისის ცხრილში არ ჩანს. გამორთული "
+        "ან სტატიკური მოწყობილობა შეიძლება ARP-ში არ ჩანდეს — გამოყენებამდე შეამოწმე ping-ით.",
+    }
+
+
+def _ranges(ips: list[ipaddress.IPv4Address]) -> list[str]:
+    out: list[str] = []
+    if not ips:
+        return out
+    start = prev = ips[0]
+    for ip in ips[1:]:
+        if int(ip) == int(prev) + 1:
+            prev = ip
+            continue
+        out.append(str(start) if start == prev else f"{start} - {prev}")
+        start = prev = ip
+    out.append(str(start) if start == prev else f"{start} - {prev}")
+    return out
+
+
+def subnet_usage(inventory: Inventory, devices: list[Device], network: str) -> dict[str, Any]:
+    net = ipaddress.ip_network(network.strip(), strict=False)
+    if net.version != 4:
+        raise ValueError("ამჟამად მხოლოდ IPv4 ქსელებია მხარდაჭერილი")
+    if net.num_addresses > MAX_USAGE_ADDRESSES:
+        raise ValueError(f"ქსელი ძალიან დიდია (მაქს. /{32 - (MAX_USAGE_ADDRESSES.bit_length() - 1)})")
+
+    def one(device: Device) -> dict[str, Any]:
+        cmds: list[str] = []
+        for intent in ("ip_addresses", "arp"):
+            cmds += commands_for(device, intent) or []
+        if not cmds:
+            return {"skipped": True}
+        lines: list[str] = []
+        for res in run_commands(inventory, device, cmds, parse=False, max_chars=None):
+            lines += res.get("output", "").splitlines()
+        return {"ips": [str(ip) for ip in addresses_in_lines(lines, net)]}
+
+    results = run_on_devices(inventory, devices, one)
+    used: dict[ipaddress.IPv4Address, set[str]] = {}
+    for name, r in results.items():
+        for ip in r.get("ips", []):
+            used.setdefault(ipaddress.IPv4Address(ip), set()).add(name)
+    out = summarize_usage(net, used)
+    out["errors"] = {k: v["error"] for k, v in results.items() if "error" in v}
+    return out

@@ -12,6 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY netagent ./netagent
 COPY inventory/devices.example.yaml ./inventory/devices.example.yaml
 
-RUN mkdir -p logs backups exports
+RUN mkdir -p logs backups exports data
 
 CMD ["python", "-m", "netagent.telegram_bot"]

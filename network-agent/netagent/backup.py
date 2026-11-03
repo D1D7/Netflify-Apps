@@ -142,6 +142,7 @@ def backup_devices(inventory: Inventory, devices: list[Device], store: BackupSto
         if changed and before is not None:
             d = unified_diff(before.read(), snap.read(), before.path.name, snap.path.name)
             out["added"], out["removed"] = diff_stats(d)
+            out["diff"] = d
         elif changed:
             out["first_backup"] = True
         return out

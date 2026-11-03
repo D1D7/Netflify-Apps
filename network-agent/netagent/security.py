@@ -100,15 +100,17 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(\bset\s+(?:password|passwd|psksecret|secret)\s+)(?:ENC\s+)?\S+", re.I), r"\1" + _MASK),
     # Cisco IOS / NX-OS / ASA
     (re.compile(r"(\b(?:enable\s+)?(?:secret|password)\s+(?:\d+\s+)?)\S+", re.I), r"\1" + _MASK),
-    (re.compile(r"(\bsnmp-server\s+community\s+)\S+", re.I), r"\1" + _MASK),
+    # Well-known default communities ("public"/"private") are not secrets and stay visible
+    # so the security audit can flag them.
+    (re.compile(r"(\bsnmp-server\s+community\s+)(?!(?:public|private)\b)\S+", re.I), r"\1" + _MASK),
     (re.compile(r"(\b(?:key-string|pre-shared-key)\s+(?:\d+\s+)?)\S+", re.I), r"\1" + _MASK),
     (re.compile(r"(\bkey\s+\d\s+)\S+", re.I), r"\1" + _MASK),
     (re.compile(r"(\b(?:tacacs|radius)-server\b.*?\bkey\s+(?:\d+\s+)?)\S+", re.I), r"\1" + _MASK),
     (re.compile(r"(\bauthentication-key\s+(?:\d+\s+)?)\S+", re.I), r"\1" + _MASK),
     # Juniper
-    (re.compile(r'(\b(?:encrypted-password|secret|community)\s+)"[^"]*"', re.I), r"\1" + _MASK),
+    (re.compile(r'(\b(?:encrypted-password|secret|community)\s+)"(?!(?:public|private)")[^"]*"', re.I), r"\1" + _MASK),
     (re.compile(r"(\bencrypted-password\s+)(?!<masked>)[^;\s]+", re.I), r"\1" + _MASK),
-    (re.compile(r"(\bcommunity\s+)(?!<masked>)\S+", re.I), r"\1" + _MASK),
+    (re.compile(r"(\bcommunity\s+)(?!<masked>|(?:public|private)\b)\S+", re.I), r"\1" + _MASK),
     (re.compile(r"\$9\$\S+"), _MASK),
     # MikroTik / generic key=value
     (re.compile(r"(\b(?:password|secret|passphrase|wpa2?-pre-shared-key|authentication-key|community)=)\S+", re.I), r"\1" + _MASK),

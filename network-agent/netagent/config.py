@@ -53,6 +53,14 @@ class Settings:
     # Daily report + backup time "HH:MM" (empty = off)
     daily_report_time: str = field(default_factory=lambda: os.getenv("NETAGENT_DAILY_REPORT", "09:00").strip())
     timezone: str = field(default_factory=lambda: os.getenv("NETAGENT_TZ", "Asia/Tbilisi"))
+    # Config change detection interval in minutes (0 = off)
+    config_watch_interval: int = field(
+        default_factory=lambda: int(os.getenv("NETAGENT_CONFIG_WATCH_INTERVAL", "60"))
+    )
+    # Persistent state (mutes, usage counters)
+    data_dir: Path = field(default_factory=lambda: Path(os.getenv("NETAGENT_DATA_DIR", str(PROJECT_ROOT / "data"))))
+    # Max AI spend per day in USD (0 = no limit)
+    daily_budget_usd: float = field(default_factory=lambda: float(os.getenv("NETAGENT_DAILY_BUDGET", "0") or 0))
 
 
 settings = Settings()
