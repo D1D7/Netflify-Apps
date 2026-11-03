@@ -28,6 +28,8 @@ class Device:
     role: str = ""
     description: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    # Deep monitoring settings, see watch.py (interfaces / bgp / ospf / cpu)
+    watch: dict = field(default_factory=dict, hash=False, compare=False)
 
     def public_info(self) -> dict:
         """What the LLM is allowed to see about the device (no credentials)."""
@@ -39,6 +41,7 @@ class Device:
             "role": self.role,
             "description": self.description,
             "tags": list(self.tags),
+            **({"watch": self.watch} if self.watch else {}),
         }
 
 
@@ -77,6 +80,7 @@ class Inventory:
                 role=str(raw.get("role", "")),
                 description=str(raw.get("description", "")),
                 tags=tuple(raw.get("tags", []) or []),
+                watch=raw.get("watch") if isinstance(raw.get("watch"), dict) else {},
             )
         return cls(devices, creds)
 

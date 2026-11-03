@@ -6,6 +6,7 @@ Run:  python -m netagent.telegram_bot
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from datetime import datetime
@@ -38,12 +39,17 @@ from .state import StateStore
 from .tools import device as dev
 from .tools.extract import extract_network_data
 from .usage import UsageTracker
+from .history import LatencyHistory
+from .notes import NoteStore
+from .watch import DeepMonitor
 
 log = logging.getLogger("netagent.telegram")
 
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 MAX_FILE_CHARS_TO_MODEL = 60_000
 MAX_INLINE_CMD_OUTPUT = 3500
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 DEFAULT_MUTE = 3600
 
 HELP_TEXT = """\
@@ -59,12 +65,18 @@ HELP_TEXT = """\
 • <code>ping R1-დან 8.8.8.8-მდე</code>
 
 📄 ატვირთე config ან log ფაილი და ამოვიღებ IP-ებს, VLAN-ებს, ინტერფეისებს.
+📸 გამომიგზავნე ფოტო (ეკრანი, შეცდომა, ტოპოლოგია, rack) და გავაანალიზებ.
 
 <b>სწრაფი ბრძანებები (AI-ს გარეშე, უფასო):</b>
 /menu — ღილაკები
 /status — რომელი მოწყობილობაა ჩართული/გათიშული
 /cmd R1 show ip route — ბრძანება პირდაპირ მოწყობილობაზე
 /cmd all show clock — ყველა მოწყობილობაზე
+/health R1 — ინტერფეისები, BGP, OSPF, CPU
+/graph R1 — latency გრაფიკი (ბოლო 24 სთ)
+/discover 10.0.0.0/24 — ახალი მოწყობილობების ძებნა
+/note R1 ISP: Magti, ID 12345 — შენიშვნის შენახვა
+/notes R1 — შენიშვნები  ·  /delnote R1 2 — წაშლა
 /audit — უსაფრთხოების აუდიტი
 /backup — config-ების backup
 /report — ქსელის რეპორტი
@@ -78,7 +90,12 @@ BOT_COMMANDS = [
     BotCommand("menu", "ღილაკების მენიუ"),
     BotCommand("status", "მოწყობილობების სტატუსი (up/down)"),
     BotCommand("cmd", "show ბრძანება: /cmd R1 show ip route"),
+    BotCommand("health", "მოწყობილობის მდგომარეობა: /health R1"),
+    BotCommand("graph", "latency გრაფიკი: /graph R1"),
     BotCommand("audit", "უსაფრთხოების აუდიტი"),
+    BotCommand("discover", "მოწყობილობების ძებნა: /discover 10.0.0.0/24"),
+    BotCommand("note", "შენიშვნა: /note R1 ტექსტი"),
+    BotCommand("notes", "შენიშვნები: /notes R1"),
     BotCommand("report", "ქსელის რეპორტი"),
     BotCommand("backup", "config-ების backup"),
     BotCommand("mute", "ალერტების დადუმება: /mute R1 2h"),
@@ -114,6 +131,7 @@ MENU = InlineKeyboardMarkup(
         ],
         [
             InlineKeyboardButton("🔕 დადუმებული", callback_data="mutes"),
+            InlineKeyboardButton("📝 შენიშვნები", callback_data="notes_all"),
             InlineKeyboardButton("❓ მაგალითები", callback_data="help"),
             InlineKeyboardButton("🔄 თავიდან", callback_data="reset"),
         ],
@@ -155,6 +173,12 @@ _TOOL_LABELS = {
     "export_excel": "📊 Excel: {filename}",
     "security_audit": "🛡 აუდიტი{filter_s}",
     "subnet_usage": "🔢 IP-ები: {network}",
+    "device_health": "🩺 {device}: მდგომარეობა",
+    "latency_history": "📈 {device}: ისტორია",
+    "get_notes": "📝 შენიშვნები",
+    "save_note": "📝 შენიშვნის შენახვა",
+    "delete_note": "📝 შენიშვნის წაშლა",
+    "discover_devices": "🔍 სკანირება: {network}",
 }
 
 
@@ -171,8 +195,12 @@ def _describe_tool(name: str, args: dict[str, Any]) -> str:
 agent: NetAgent
 mutes: AlertMutes
 usage: UsageTracker
+notes: NoteStore
+history: LatencyHistory
 monitor = ReachabilityMonitor()
+deep_monitor = DeepMonitor()
 _last_question: dict[int, Any] = {}
+_pending_discovery: dict[int, tuple[list, str]] = {}
 
 
 def _is_allowed(update: Update) -> bool:
@@ -377,7 +405,21 @@ _ACTIONS = {
     "audit": ("🛡 ვამოწმებ კონფიგურაციებს...", _run_audit),
     "usage": (None, lambda: usage.summary()),
     "mutes": (None, lambda: mutes.describe()),
+    "notes_all": (None, lambda: _notes_overview()),
 }
+
+
+def _notes_overview() -> str:
+    from .notes import GENERAL
+
+    data = notes.all()
+    if not data:
+        return "📝 შენიშვნები ჯერ არ არის.\nდამატება: /note R1 ტექსტი  ან უბრალოდ მომწერე „დაიმახსოვრე ...“"
+    lines = ["📝 **შენიშვნები:**"]
+    for target, items in sorted(data.items()):
+        name = "ზოგადი" if target == GENERAL else target
+        lines.append(f"• {name}: {len(items)}  → /notes {'' if target == GENERAL else target}".rstrip())
+    return "\n".join(lines)
 
 
 async def _run_action(message: Message, action: str) -> None:
@@ -539,6 +581,149 @@ async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+def _resolve_device(name: str):
+    return agent.inventory().get(name)
+
+
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    from .watch import collect, format_health_text
+
+    message = update.effective_message
+    if not context.args:
+        return await message.reply_text("გამოყენება: /health R1")
+    try:
+        device = _resolve_device(context.args[0])
+    except InventoryError as exc:
+        return await message.reply_text(f"⚠️ {exc}")
+    note = await message.reply_text(f"🩺 ვამოწმებ {device.name}...")
+    try:
+        snap = await asyncio.to_thread(collect, agent.inventory(), device, True)
+        text = format_health_text(device.name, snap)
+    except Exception as exc:  # noqa: BLE001
+        text = f"⚠️ {device.name}: {first_line(str(exc))}"
+    try:
+        await note.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    await send_markdown(message, text)
+
+
+async def cmd_graph(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    from .charts import latency_chart
+
+    message = update.effective_message
+    args = context.args or []
+    if not args:
+        return await message.reply_text("გამოყენება: /graph R1  ან  /graph R1 48")
+    try:
+        device = _resolve_device(args[0])
+        hours = max(1, min(336, int(args[1]))) if len(args) > 1 else 24
+    except (InventoryError, ValueError) as exc:
+        return await message.reply_text(f"⚠️ {exc}")
+    points = history.read(device.name, hours)
+    if not points:
+        return await message.reply_text(
+            f"📈 {device.name}: ისტორია ჯერ არ არის. მონიტორინგი ყოველ {settings.monitor_interval} წუთში აგროვებს მონაცემებს."
+        )
+    stats = history.stats(device.name, hours)
+    path = settings.export_dir / f"latency-{device.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+    try:
+        await asyncio.to_thread(latency_chart, device.name, points, path, hours, stats)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("chart failed")
+        return await message.reply_text(f"⚠️ გრაფიკი ვერ შეიქმნა: {exc}")
+    caption = f"{device.name}: uptime {stats['uptime_percent']}%" + (
+        f", საშ. {stats['avg_ms']} ms, მაქს. {stats['max_ms']} ms" if "avg_ms" in stats else "")
+    with path.open("rb") as fh:
+        await message.reply_photo(fh, caption=caption)
+
+
+async def cmd_discover(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    from .discovery import discover, format_candidates
+
+    message = update.effective_message
+    args = context.args or []
+    if not args:
+        return await message.reply_text(
+            "გამოყენება: /discover 10.0.0.0/24\nსხვა credentials პროფილით: /discover 10.0.0.0/24 mikrotik"
+        )
+    network, cred = args[0], (args[1] if len(args) > 1 else "default")
+    note = await message.reply_text(f"🔍 ვასკანერებ {network} (შეიძლება 1-2 წუთი დასჭირდეს)...")
+    try:
+        cands = await asyncio.to_thread(discover, agent.inventory(), network, 22, cred)
+        text = format_candidates(cands)
+    except Exception as exc:  # noqa: BLE001
+        cands, text = [], f"⚠️ {first_line(str(exc))}"
+    try:
+        await note.delete()
+    except Exception:  # noqa: BLE001
+        pass
+    new = [c for c in cands if c.device_type and not c.already_in_inventory]
+    markup = None
+    if new:
+        _pending_discovery[update.effective_chat.id] = (new, cred)
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"➕ დამატება ({len(new)})", callback_data="disc:add"),
+            InlineKeyboardButton("❌ არა", callback_data="disc:cancel"),
+        ]])
+    await send_markdown(message, text, reply_markup=markup)
+
+
+def _split_target(args: list[str]) -> tuple[str, list[str]]:
+    """First argument is a device if it exists in the inventory, otherwise the note is general."""
+    if args:
+        try:
+            return _resolve_device(args[0]).name, args[1:]
+        except InventoryError:
+            pass
+    return "", args
+
+
+async def cmd_note(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    target, rest = _split_target(context.args or [])
+    text = " ".join(rest).strip()
+    if not text:
+        return await update.effective_message.reply_text(
+            "გამოყენება: /note R1 ISP: Magti, circuit 12345\nზოგადი: /note ოფისის ქსელი 10.0.0.0/16"
+        )
+    try:
+        count = notes.add(target, text, author=f"telegram:{update.effective_user.id}")
+    except ValueError as exc:
+        return await update.effective_message.reply_text(f"⚠️ {exc}")
+    await update.effective_message.reply_text(f"📝 შენახულია ({target or 'ზოგადი'}, სულ {count}).")
+
+
+async def cmd_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    if not context.args:
+        return await send_markdown(update.effective_message, _notes_overview())
+    target, _ = _split_target(context.args)
+    if not target and context.args[0].lower() not in {"general", "ზოგადი"}:
+        return await update.effective_message.reply_text(f"⚠️ მოწყობილობა '{context.args[0]}' ვერ ვიპოვე")
+    await send_markdown(update.effective_message, notes.format(target))
+
+
+async def cmd_delnote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    target, rest = _split_target(context.args or [])
+    try:
+        removed = notes.delete(target, int(rest[0]))
+    except (IndexError, ValueError) as exc:
+        msg = str(exc) if isinstance(exc, ValueError) and "შენიშვნა" in str(exc) else "გამოყენება: /delnote R1 2"
+        return await update.effective_message.reply_text(f"⚠️ {msg}")
+    await update.effective_message.reply_text(f"🗑 წაიშალა: {removed.get('text', '')[:100]}")
+
+
 def _action_command(action: str):
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not _is_allowed(update):
@@ -567,6 +752,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await query.answer()
+    if data in {"disc:add", "disc:cancel"}:
+        pending = _pending_discovery.pop(chat_id, None)
+        if data == "disc:cancel" or not pending:
+            return await query.message.reply_text("გაუქმდა." if data == "disc:cancel" else "ეს სია ვადაგასულია, თავიდან გაუშვი /discover.")
+        from .discovery import add_to_inventory
+
+        cands, cred = pending
+        try:
+            added = await asyncio.to_thread(add_to_inventory, settings.inventory_path, cands, cred)
+        except Exception as exc:  # noqa: BLE001
+            return await query.message.reply_text(f"⚠️ inventory-ში ჩაწერა ვერ მოხერხდა: {exc}")
+        return await query.message.reply_text(
+            f"✅ დაემატა {len(added)}: " + ", ".join(added) + "\nსახელები შეგიძლია შეცვალო inventory/devices.yaml-ში."
+            if added else "ახალი არაფერი დაემატა."
+        )
     if data in _ACTIONS:
         await _run_action(query.message, data)
     elif data == "help":
@@ -591,11 +791,35 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _ask_agent(update, context, update.effective_message.text)
 
 
+def _image_content(data: bytes, media_type: str, caption: str | None) -> list[dict]:
+    return [
+        {"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                     "data": base64.b64encode(data).decode("ascii")}},
+        {"type": "text", "text": caption or "რა ჩანს ამ სურათზე? თუ შეცდომაა ან პრობლემა — ამიხსენი და მითხარი, როგორ გავასწორო."},
+    ]
+
+
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_allowed(update):
+        return await _deny(update)
+    message = update.effective_message
+    photo = message.photo[-1]  # largest size
+    if photo.file_size and photo.file_size > MAX_IMAGE_BYTES:
+        return await message.reply_text("⚠️ სურათი ძალიან დიდია (მაქს. 5 MB).")
+    data = bytes(await (await photo.get_file()).download_as_bytearray())
+    await _ask_agent(update, context, _image_content(data, "image/jpeg", message.caption))
+
+
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(update):
         return await _deny(update)
     message = update.effective_message
     doc = message.document
+    if (doc.mime_type or "").lower() in IMAGE_TYPES:
+        if doc.file_size and doc.file_size > MAX_IMAGE_BYTES:
+            return await message.reply_text("⚠️ სურათი ძალიან დიდია (მაქს. 5 MB).")
+        data = bytes(await (await doc.get_file()).download_as_bytearray())
+        return await _ask_agent(update, context, _image_content(data, doc.mime_type.lower(), message.caption))
     if doc.file_size and doc.file_size > MAX_UPLOAD_BYTES:
         return await message.reply_text("⚠️ ფაილი ძალიან დიდია (მაქს. 2 MB).")
     tg_file = await doc.get_file()
@@ -637,6 +861,10 @@ async def job_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:  # noqa: BLE001
         log.exception("monitor check failed")
         return
+    try:
+        await asyncio.to_thread(history.record, results)
+    except Exception:  # noqa: BLE001
+        log.exception("history record failed")
     downtimes = {r.device: monitor.down_duration(r.device) for r in results if r.up}
     changes = [(r, s) for r, s in monitor.update(results) if not mutes.is_muted(r.device)]
     if not changes:
@@ -653,6 +881,20 @@ async def job_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
             )
     down = [r.device for r, s in changes if s == "down"]
     await _broadcast(context.application, "🚨 **ალერტი**\n" + "\n".join(lines), _mute_buttons(down))
+
+
+async def job_deep_monitor(context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        inv = agent.inventory()
+        alerts = await asyncio.to_thread(deep_monitor.run, inv, list(inv.devices.values()))
+    except Exception:  # noqa: BLE001
+        log.exception("deep monitor failed")
+        return
+    alerts = [(d, a) for d, a in alerts if not mutes.is_muted(d)]
+    if not alerts:
+        return
+    devices = sorted({d for d, _ in alerts})
+    await _broadcast(context.application, "🚨 **ალერტი**\n" + "\n".join(a for _, a in alerts), _mute_buttons(devices))
 
 
 def _diff_snippet(diff: str, max_lines: int = 15) -> str:
@@ -730,6 +972,11 @@ async def _post_init(app: Application) -> None:
     if settings.monitor_interval > 0:
         jq.run_repeating(job_monitor, interval=settings.monitor_interval * 60, first=20, name="monitor")
         log.info("reachability monitoring every %s min", settings.monitor_interval)
+    if settings.deep_monitor_interval > 0:
+        jq.run_repeating(
+            job_deep_monitor, interval=settings.deep_monitor_interval * 60, first=45, name="deep_monitor"
+        )
+        log.info("deep monitoring (watch) every %s min", settings.deep_monitor_interval)
     if settings.config_watch_interval > 0:
         jq.run_repeating(
             job_config_watch, interval=settings.config_watch_interval * 60, first=90, name="config_watch"
@@ -744,11 +991,13 @@ async def _post_init(app: Application) -> None:
 
 def init_services() -> None:
     """Create the agent and persistent state (separate from main() for testing)."""
-    global agent, mutes, usage
+    global agent, mutes, usage, notes, history
     state = StateStore(settings.data_dir / "state.json")
     mutes = AlertMutes(state)
     usage = UsageTracker(state, settings.daily_budget_usd)
-    agent = NetAgent(usage=usage)
+    notes = NoteStore(state)
+    history = LatencyHistory(settings.data_dir / "latency")
+    agent = NetAgent(usage=usage, notes=notes, history=history)
 
 
 def main() -> None:
@@ -777,9 +1026,16 @@ def main() -> None:
     app.add_handler(CommandHandler("cmd", cmd_cmd))
     app.add_handler(CommandHandler("mute", cmd_mute))
     app.add_handler(CommandHandler("unmute", cmd_unmute))
+    app.add_handler(CommandHandler("health", cmd_health))
+    app.add_handler(CommandHandler("graph", cmd_graph))
+    app.add_handler(CommandHandler("discover", cmd_discover))
+    app.add_handler(CommandHandler("note", cmd_note))
+    app.add_handler(CommandHandler("notes", cmd_notes))
+    app.add_handler(CommandHandler("delnote", cmd_delnote))
     for action in _ACTIONS:
         app.add_handler(CommandHandler(action, _action_command(action)))
     app.add_handler(CallbackQueryHandler(on_button))
+    app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.Document.ALL, on_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     log.info("NetAgent Telegram bot started (model=%s)", settings.model)

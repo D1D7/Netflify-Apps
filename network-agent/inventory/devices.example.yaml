@@ -12,6 +12,9 @@ credentials:
     username_env: MIKROTIK_USER
     password_env: MIKROTIK_PASS
 
+# 💡 inventory-ს ხელით შევსება არ არის აუცილებელი:
+#    Telegram: /discover 10.0.0.0/24   ·   CLI: python -m netagent discover 10.0.0.0/24 --add
+#
 # device_type = Netmiko-ს პლატფორმის სახელი. ხშირად გამოყენებადი:
 #   cisco_ios, cisco_xe, cisco_nxos, cisco_xr, cisco_asa, arista_eos,
 #   juniper_junos, mikrotik_routeros, huawei, hp_comware, hp_procurve,
@@ -25,6 +28,13 @@ devices:
     site: HQ
     role: router
     description: ინტერნეტ edge router
+    # სიღრმისეული მონიტორინგი (არასავალდებულო): ალერტი, როცა რომელიმე ჩამოთვლილი
+    # ინტერფეისი ჩავარდება, BGP/OSPF neighbor დაეცემა ან CPU ზღვარს გადააჭარბებს.
+    watch:
+      interfaces: [Gi0/0, Gi0/1]   # მოკლე სახელებიც მუშაობს (Gi = GigabitEthernet)
+      bgp: true
+      ospf: true
+      cpu: 80                      # %
 
   SW-Core-1:
     host: 10.0.0.2

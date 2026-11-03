@@ -42,6 +42,9 @@ on anything abnormal (interfaces down, errors, duplicate IPs, missing routes).
 - Security questions ("is the network secure?", "audit"): call security_audit, then explain the most important findings first with the exact fix commands for that platform.
 - Free/used IP questions: call subnet_usage. Remind that an address missing from ARP may still belong to a powered-off or static device.
 - To test reachability *from a device* (e.g. ping from R1 to 8.8.8.8), use run_show_command with that device's ping/traceroute syntax; the ping/traceroute tools run from the agent's own server.
+- Notes: before troubleshooting a device, call get_notes for it (ISP contacts, circuit IDs and known issues live there). When the user asks you to remember something, call save_note. After an incident is resolved, offer to save a short note with the cause and the fix.
+- "How is R1?" / health questions: call device_health; latency/uptime trends: latency_history (chart=true when the user wants a graph).
+- Images: users may send photos or screenshots (console errors, topology drawings, racks, labels). Transcribe relevant CLI/error text exactly, explain it, and verify against live device data with tools when the photo refers to a device in the inventory.
 - Exports: when the user asks for Excel/a file/an export, or a table is too large for chat, collect the data with tools and call export_excel. The file is delivered automatically; in your answer give only a short summary, not the full table again.
 - Everything is read-only. Configuration changes are not possible in this version: if the user \
 asks for a change, write the exact commands they could apply themselves, explain the impact and \
@@ -86,10 +89,16 @@ class _Session:
 
 class NetAgent:
     def __init__(
-        self, client: anthropic.Anthropic | None = None, usage: UsageTracker | None = None
+        self,
+        client: anthropic.Anthropic | None = None,
+        usage: UsageTracker | None = None,
+        notes: Any = None,
+        history: Any = None,
     ) -> None:
         self.client = client or anthropic.Anthropic(max_retries=3)
         self.usage = usage
+        self.notes = notes
+        self.history = history
         self._sessions: dict[str, _Session] = defaultdict(_Session)
         self._sessions_lock = threading.Lock()
         self._inventory: Inventory | None = None
@@ -136,7 +145,7 @@ class NetAgent:
                 session.needs_reset = False
                 notice = "ℹ️ საუბრის ისტორია ძალიან გაიზარდა და თავიდან დავიწყე.\n\n"
             try:
-                ctx = ToolContext(inventory=self.inventory(), user=user)
+                ctx = ToolContext(inventory=self.inventory(), user=user, notes=self.notes, history=self.history)
             except Exception as exc:  # noqa: BLE001
                 return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
             text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)

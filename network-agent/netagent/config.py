@@ -57,6 +57,10 @@ class Settings:
     config_watch_interval: int = field(
         default_factory=lambda: int(os.getenv("NETAGENT_CONFIG_WATCH_INTERVAL", "60"))
     )
+    # Deep monitoring (interfaces / BGP / OSPF / CPU of devices with a `watch` section), minutes (0 = off)
+    deep_monitor_interval: int = field(
+        default_factory=lambda: int(os.getenv("NETAGENT_DEEP_MONITOR_INTERVAL", "5"))
+    )
     # Persistent state (mutes, usage counters)
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("NETAGENT_DATA_DIR", str(PROJECT_ROOT / "data"))))
     # Max AI spend per day in USD (0 = no limit)

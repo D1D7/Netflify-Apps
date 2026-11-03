@@ -12,6 +12,11 @@
   python -m netagent.cli ips 10.1.1.0/24      # used / free IPs in a subnet
   python -m netagent.cli cmd R1 show clock    # run one read-only command (no AI)
   python -m netagent.cli usage                # AI cost
+  python -m netagent.cli discover 10.0.0.0/24 --add   # find devices, add to inventory
+  python -m netagent.cli health R1            # interfaces / BGP / OSPF / CPU
+  python -m netagent.cli graph R1             # latency chart PNG (needs the bot's monitoring data)
+  python -m netagent.cli notes R1             # device notes;  note R1 "text" to add
+  python -m netagent.cli ask --image err.png "რა შეცდომაა?"
   python -m netagent.cli extract file.cfg     # offline IP/VLAN extraction, no AI
 """
 
@@ -37,6 +42,23 @@ from .tools.extract import extract_network_data
 
 console = Console()
 MAX_STDIN_CHARS = 60_000
+
+
+def _state() -> StateStore:
+    return StateStore(settings.data_dir / "state.json")
+
+
+def _make_agent():
+    from .agent import NetAgent
+    from .history import LatencyHistory
+    from .notes import NoteStore
+
+    state = _state()
+    return NetAgent(
+        usage=UsageTracker(state, settings.daily_budget_usd),
+        notes=NoteStore(state),
+        history=LatencyHistory(settings.data_dir / "latency"),
+    )
 
 
 def _usage_tracker() -> UsageTracker:
@@ -76,8 +98,21 @@ def _content_with_stdin(question: str) -> str | list[dict[str, Any]]:
 def cmd_ask(args: argparse.Namespace) -> int:
     from .agent import NetAgent
 
-    agent = NetAgent(usage=_usage_tracker())
+    agent = _make_agent()
     content = _content_with_stdin(" ".join(args.question))
+    if args.image:
+        import base64
+        import mimetypes
+        from pathlib import Path
+
+        img = Path(args.image)
+        media = mimetypes.guess_type(img.name)[0] or "image/png"
+        if media not in {"image/jpeg", "image/png", "image/gif", "image/webp"}:
+            console.print(f"[red]მხარდაუჭერელი სურათის ტიპი: {media}[/red]")
+            return 1
+        blocks = content if isinstance(content, list) else [{"type": "text", "text": content or "რა ჩანს ამ სურათზე?"}]
+        content = [{"type": "image", "source": {"type": "base64", "media_type": media,
+                                                "data": base64.b64encode(img.read_bytes()).decode("ascii")}}, *blocks]
     with console.status("ვამუშავებ..."):
         reply = agent.chat("cli-oneshot", content, user=_user(), channel="cli", on_tool=_on_tool)
     _print_reply(reply)
@@ -93,7 +128,7 @@ def _print_reply(reply) -> None:
 def cmd_chat(args: argparse.Namespace) -> int:
     from .agent import NetAgent
 
-    agent = NetAgent(usage=_usage_tracker())
+    agent = _make_agent()
     console.print(
         "[bold]NetAgent[/bold] — ქსელის ასისტენტი (read-only). "
         "[dim]/reset — თავიდან, /devices — სია, /exit — გასვლა[/dim]\n"
@@ -301,6 +336,105 @@ def cmd_cmd(args: argparse.Namespace) -> int:
     return rc
 
 
+def cmd_discover(args: argparse.Namespace) -> int:
+    from .discovery import add_to_inventory, discover, format_candidates
+
+    inv = _load_inventory()
+    if inv is None:
+        # An empty inventory is fine for discovery; credentials still come from it.
+        return 1
+    try:
+        with console.status(f"ვასკანერებ {args.network} ..."):
+            cands = discover(inv, args.network, args.port, args.credentials)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{first_line(str(exc))}[/red]")
+        return 1
+    console.print(Markdown(format_candidates(cands).replace("\n", "  \n")))
+    if args.add:
+        added = add_to_inventory(settings.inventory_path, cands, args.credentials, args.site)
+        console.print(f"[green]✅ დაემატა {len(added)}:[/green] {', '.join(added) or '—'}")
+    elif any(c.device_type and not c.already_in_inventory for c in cands):
+        console.print("[dim]inventory-ში დასამატებლად გაუშვი იგივე ბრძანება --add-ით[/dim]")
+    return 0
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    from .watch import collect, format_health_text
+
+    inv = _load_inventory()
+    if inv is None:
+        return 1
+    try:
+        device = inv.get(args.device)
+        with console.status(f"ვამოწმებ {device.name}..."):
+            snap = collect(inv, device, everything=True)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[red]{first_line(str(exc))}[/red]")
+        return 1
+    console.print(Markdown(format_health_text(device.name, snap).replace("\n", "  \n")))
+    return 0
+
+
+def cmd_graph(args: argparse.Namespace) -> int:
+    from datetime import datetime
+    from pathlib import Path
+
+    from .charts import latency_chart
+    from .history import LatencyHistory
+
+    hist = LatencyHistory(settings.data_dir / "latency")
+    points = hist.read(args.device, args.hours)
+    if not points:
+        console.print("ისტორია ჯერ არ არის — მონაცემებს Telegram ბოტის მონიტორინგი აგროვებს.")
+        return 1
+    out = Path(args.output) if args.output else settings.export_dir / f"latency-{args.device}-{datetime.now():%Y%m%d-%H%M%S}.png"
+    latency_chart(args.device, points, out, args.hours, hist.stats(args.device, args.hours))
+    console.print(f"[green]📈 შეინახა:[/green] {out}")
+    return 0
+
+
+def cmd_notes(args: argparse.Namespace) -> int:
+    from .notes import GENERAL, NoteStore
+
+    store = NoteStore(_state())
+    if args.device:
+        console.print(Markdown(store.format(args.device).replace("\n", "  \n")))
+    else:
+        data = store.all()
+        if not data:
+            console.print("შენიშვნები ჯერ არ არის.")
+        for target in sorted(data):
+            console.print(Markdown(store.format("" if target == GENERAL else target).replace("\n", "  \n")))
+    return 0
+
+
+def cmd_note(args: argparse.Namespace) -> int:
+    from .notes import NoteStore
+
+    target = "" if args.device in {"-", "general"} else args.device
+    if target:
+        inv = _load_inventory()
+        if inv is None:
+            return 1
+        try:
+            target = inv.get(target).name
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]{exc}[/red]")
+            return 1
+    store = NoteStore(_state())
+    if args.delete:
+        removed = store.delete(target, args.delete)
+        console.print(f"🗑 წაიშალა: {removed.get('text')}")
+        return 0
+    text = " ".join(args.text)
+    if not text:
+        console.print("[red]ტექსტი აკლია[/red]")
+        return 1
+    count = store.add(target, text, author=_user())
+    console.print(f"📝 შენახულია ({target or 'ზოგადი'}, სულ {count})")
+    return 0
+
+
 def cmd_usage(args: argparse.Namespace) -> int:
     console.print(Markdown(_usage_tracker().summary().replace("\n", "  \n")))
     return 0
@@ -362,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("chat", help="ინტერაქტიული ჩატი (default)")
     p_ask = sub.add_parser("ask", help="ერთი კითხვა")
     p_ask.add_argument("question", nargs="*")
+    p_ask.add_argument("--image", help="სურათი (png/jpg) კითხვასთან ერთად")
     sub.add_parser("devices", help="inventory-ს სია")
     sub.add_parser("status", help="რომელი მოწყობილობაა ჩართული/გათიშული")
     p_bk = sub.add_parser("backup", help="config-ების backup")
@@ -380,6 +515,24 @@ def main(argv: list[str] | None = None) -> int:
     p_cmd.add_argument("target", help="მოწყობილობა, ფილტრი ან all")
     p_cmd.add_argument("command", nargs="+")
     sub.add_parser("usage", help="AI ხარჯი")
+    p_disc = sub.add_parser("discover", help="ქსელში მოწყობილობების ძებნა (SSH) და ამოცნობა")
+    p_disc.add_argument("network")
+    p_disc.add_argument("--add", action="store_true", help="ნაპოვნის დამატება inventory-ში")
+    p_disc.add_argument("--credentials", default="default", help="credentials პროფილი inventory-დან")
+    p_disc.add_argument("--port", type=int, default=22)
+    p_disc.add_argument("--site", default="", help="site ველი ახალი მოწყობილობებისთვის")
+    p_health = sub.add_parser("health", help="ინტერფეისები, BGP, OSPF, CPU")
+    p_health.add_argument("device")
+    p_graph = sub.add_parser("graph", help="latency გრაფიკი (PNG)")
+    p_graph.add_argument("device")
+    p_graph.add_argument("--hours", type=int, default=24)
+    p_graph.add_argument("-o", "--output")
+    p_notes = sub.add_parser("notes", help="შენიშვნების ნახვა")
+    p_notes.add_argument("device", nargs="?", default="")
+    p_note = sub.add_parser("note", help="შენიშვნის დამატება/წაშლა: note R1 ტექსტი | note - ზოგადი ტექსტი | note R1 --delete 2")
+    p_note.add_argument("device", help="მოწყობილობა, ან '-' ზოგადი შენიშვნისთვის")
+    p_note.add_argument("text", nargs="*")
+    p_note.add_argument("--delete", type=int, metavar="N")
     p_rep = sub.add_parser("report", help="ქსელის რეპორტი")
     p_rep.add_argument("--no-backup", action="store_true", help="backup-ის გარეშე")
     p_ex = sub.add_parser("extract", help="ფაილიდან IP/VLAN/MAC ამოღება AI-ს გარეშე")
@@ -399,6 +552,11 @@ def main(argv: list[str] | None = None) -> int:
         "ips": cmd_ips,
         "cmd": cmd_cmd,
         "usage": cmd_usage,
+        "discover": cmd_discover,
+        "health": cmd_health,
+        "graph": cmd_graph,
+        "notes": cmd_notes,
+        "note": cmd_note,
         "extract": cmd_extract,
         None: cmd_chat,
     }

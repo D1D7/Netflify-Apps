@@ -24,6 +24,8 @@ class ToolContext:
     inventory: Inventory
     user: str  # who asked: "telegram:<id>" or "cli:<username>"
     files: list[Path] = field(default_factory=list)  # files produced this turn (sent to the user)
+    notes: Any = None  # NoteStore
+    history: Any = None  # LatencyHistory
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -197,6 +199,53 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "'რამდენი IP-ა დაკავებული VLAN 10-ში?'. მაქსიმუმ /20.",
         "input_schema": _obj({"network": {"type": "string"}, "filter": _FILTER}, ["network"]),
     },
+    {
+        "name": "device_health",
+        "description": "მოწყობილობის მიმდინარე მდგომარეობა ერთი გამოძახებით: ინტერფეისები (up/down/admin-down "
+        "რაოდენობა და down-ების სია), BGP სესიები, OSPF neighbor-ები, CPU %. გამოიყენე 'როგორაა R1?' ტიპის "
+        "კითხვებზე ან პრობლემის ძებნის დასაწყისში.",
+        "input_schema": _obj({"device": _DEVICE}, ["device"]),
+    },
+    {
+        "name": "latency_history",
+        "description": "მოწყობილობის ხელმისაწვდომობის ისტორია მონიტორინგიდან: uptime %, საშუალო/p95/მაქს. "
+        "latency ბოლო `hours` საათში. chart=true ქმნის გრაფიკს (PNG) და მომხმარებელს უგზავნის.",
+        "input_schema": _obj(
+            {"device": _DEVICE, "hours": {"type": "integer", "minimum": 1, "maximum": 336}, "chart": {"type": "boolean"}},
+            ["device"],
+        ),
+    },
+    {
+        "name": "get_notes",
+        "description": "შენახული შენიშვნები მოწყობილობაზე (ISP, circuit ID, კონტაქტები, ცნობილი პრობლემები, "
+        "წარსული ინციდენტები). device-ის გარეშე = ზოგადი შენიშვნები. გამოიძახე პრობლემის გარჩევისას.",
+        "input_schema": _obj({"device": {"type": "string", "description": "მოწყობილობა; ცარიელი = ზოგადი"}}, []),
+    },
+    {
+        "name": "save_note",
+        "description": "ინახავს შენიშვნას მოწყობილობაზე ან ზოგადად. გამოიძახე, როცა მომხმარებელი გთხოვს "
+        "რაიმეს დამახსოვრებას (\"დაიმახსოვრე...\") ან როცა ინციდენტის მიზეზი და გადაწყვეტა დადგინდა და "
+        "მომხმარებელი თანხმდება მის შენახვაზე.",
+        "input_schema": _obj(
+            {"device": {"type": "string", "description": "მოწყობილობა; ცარიელი = ზოგადი"}, "text": {"type": "string"}},
+            ["text"],
+        ),
+    },
+    {
+        "name": "delete_note",
+        "description": "შლის შენიშვნას ნომრით (get_notes-ის სიიდან, 1-დან).",
+        "input_schema": _obj({"device": {"type": "string"}, "number": {"type": "integer", "minimum": 1}}, ["number"]),
+    },
+    {
+        "name": "discover_devices",
+        "description": "ასკანერებს ქსელს (მაქს. /22) SSH-ზე და ცდილობს ამოიცნოს მოწყობილობის ტიპი და hostname "
+        "credentials პროფილით. inventory-ში არაფერს წერს — დასამატებლად მომხმარებელს შესთავაზე /discover "
+        "ბრძანება (Telegram) ან `python -m netagent discover <ქსელი> --add`.",
+        "input_schema": _obj(
+            {"network": {"type": "string"}, "credentials": {"type": "string", "description": "default"}},
+            ["network"],
+        ),
+    },
 ]
 
 DEVICE_TOOLS = {
@@ -208,6 +257,8 @@ DEVICE_TOOLS = {
     "backup_configs",
     "security_audit",
     "subnet_usage",
+    "device_health",
+    "discover_devices",
 }
 
 
@@ -343,6 +394,69 @@ def _subnet_usage(ctx: ToolContext, network: str, filter: str = "") -> Any:
     return dev.subnet_usage(ctx.inventory, devices, network)
 
 
+def _device_health(ctx: ToolContext, device: str) -> Any:
+    from ..watch import collect, format_health
+
+    d = ctx.inventory.get(device)
+    return format_health(d, collect(ctx.inventory, d, everything=True))
+
+
+def _latency_history(ctx: ToolContext, device: str, hours: int = 24, chart: bool = False) -> Any:
+    if ctx.history is None:
+        return {"error": "ისტორია მიუწვდომელია (მონიტორინგი მუშაობს მხოლოდ Telegram ბოტში)"}
+    d = ctx.inventory.get(device)
+    stats = ctx.history.stats(d.name, hours)
+    if not stats.get("samples"):
+        return {**stats, "note": "მონაცემები ჯერ არ არის — მონიტორინგი ყოველ რამდენიმე წუთში აგროვებს"}
+    if chart:
+        from datetime import datetime
+
+        from ..charts import latency_chart
+
+        path = settings.export_dir / f"latency-{d.name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+        latency_chart(d.name, ctx.history.read(d.name, hours), path, hours, stats)
+        ctx.files.append(path)
+        stats["chart"] = "გრაფიკი შეიქმნა და მომხმარებელს გაეგზავნება"
+    return stats
+
+
+def _need_notes(ctx: ToolContext):
+    if ctx.notes is None:
+        raise ValueError("შენიშვნების საცავი მიუწვდომელია")
+    return ctx.notes
+
+
+def _resolve_note_target(ctx: ToolContext, device: str) -> str:
+    return ctx.inventory.get(device).name if device and device.strip() else ""
+
+
+def _get_notes(ctx: ToolContext, device: str = "") -> Any:
+    notes = _need_notes(ctx)
+    target = _resolve_note_target(ctx, device)
+    items = notes.list(target)
+    return {"device": target or "general", "notes": [{"number": i, **n} for i, n in enumerate(items, 1)]}
+
+
+def _save_note(ctx: ToolContext, text: str, device: str = "") -> Any:
+    target = _resolve_note_target(ctx, device)
+    count = _need_notes(ctx).add(target, text, author=ctx.user)
+    return {"saved": True, "device": target or "general", "total_notes": count}
+
+
+def _delete_note(ctx: ToolContext, number: int, device: str = "") -> Any:
+    target = _resolve_note_target(ctx, device)
+    removed = _need_notes(ctx).delete(target, number)
+    return {"deleted": removed.get("text"), "device": target or "general"}
+
+
+def _discover_devices(ctx: ToolContext, network: str, credentials: str = "default") -> Any:
+    from ..discovery import discover
+
+    cands = discover(ctx.inventory, network, credentials=credentials)
+    return {"network": network, "found": [c.as_dict() for c in cands],
+            "how_to_add": "Telegram: /discover " + network + "  ·  CLI: python -m netagent discover " + network + " --add"}
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "list_devices": lambda ctx, filter="": [d.public_info() for d in ctx.inventory.filter(filter)],
     "get_device_data": _get_device_data,
@@ -361,6 +475,12 @@ _HANDLERS: dict[str, Callable[..., Any]] = {
     "export_excel": _export_excel,
     "security_audit": _security_audit,
     "subnet_usage": _subnet_usage,
+    "device_health": _device_health,
+    "latency_history": _latency_history,
+    "get_notes": _get_notes,
+    "save_note": _save_note,
+    "delete_note": _delete_note,
+    "discover_devices": _discover_devices,
 }
 
 _SCHEMA_BY_NAME = {t["name"]: t for t in TOOL_SCHEMAS}
@@ -385,6 +505,8 @@ def _validate_input(name: str, args: Any) -> dict:
             raise ValueError(f"'{key}' უნდა იყოს integer")
         if expected == "array" and not isinstance(value, list):
             raise ValueError(f"'{key}' უნდა იყოს სია (array)")
+        if expected == "boolean" and not isinstance(value, bool):
+            raise ValueError(f"'{key}' უნდა იყოს true/false")
         if "enum" in props[key] and value not in props[key]["enum"]:
             raise ValueError(f"'{key}' უნდა იყოს ერთ-ერთი: {', '.join(props[key]['enum'])}")
     return args
