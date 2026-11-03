@@ -1,0 +1,55 @@
+"""Convert the agent's Markdown-ish answers to Telegram HTML and split long messages."""
+
+from __future__ import annotations
+
+import html
+import re
+
+TELEGRAM_LIMIT = 3800  # Telegram's hard limit is 4096; leave room for tags
+
+
+def split_markdown(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
+    """Split on line boundaries, keeping ``` code fences balanced in every chunk."""
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    in_fence = False
+    for line in text.split("\n"):
+        while len(line) > limit:  # pathological single long line
+            head, line = line[:limit], line[limit:]
+            current.append(head)
+            chunks.append("\n".join(current) + ("\n```" if in_fence else ""))
+            current, size = (["```"] if in_fence else []), 0
+        if size + len(line) + 1 > limit and current:
+            chunks.append("\n".join(current) + ("\n```" if in_fence else ""))
+            current, size = (["```"] if in_fence else []), 0
+        current.append(line)
+        size += len(line) + 1
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+    if current and any(part.strip() for part in current):
+        chunks.append("\n".join(current) + ("\n```" if in_fence else ""))
+    return chunks or [""]
+
+
+_FENCE_RE = re.compile(r"```[ \t]*([\w+-]*)[ \t]*\n?(.*?)```", re.S)
+
+
+def _inline(text: str) -> str:
+    text = html.escape(text, quote=False)
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"(?m)^#{1,6}\s+(.+)$", r"<b>\1</b>", text)
+    return text
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    out: list[str] = []
+    pos = 0
+    for m in _FENCE_RE.finditer(text):
+        out.append(_inline(text[pos : m.start()]))
+        code = m.group(2).rstrip("\n")
+        out.append(f"<pre>{html.escape(code, quote=False)}</pre>")
+        pos = m.end()
+    out.append(_inline(text[pos:]))
+    return "".join(out).strip()

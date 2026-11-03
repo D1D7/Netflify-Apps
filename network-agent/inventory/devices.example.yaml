@@ -1,0 +1,47 @@
+# NetAgent inventory.
+# დააკოპირე → inventory/devices.yaml და შეცვალე შენი მოწყობილობებით.
+#
+# credentials: აქ პაროლები არ იწერება! მხოლოდ გარემოს ცვლადების სახელები,
+# რომლებიც .env ფაილშია განსაზღვრული.
+credentials:
+  default:
+    username_env: NET_USER
+    password_env: NET_PASS
+    secret_env: NET_ENABLE        # Cisco enable (არასავალდებულო)
+  mikrotik:
+    username_env: MIKROTIK_USER
+    password_env: MIKROTIK_PASS
+
+# device_type = Netmiko-ს პლატფორმის სახელი. ხშირად გამოყენებადი:
+#   cisco_ios, cisco_xe, cisco_nxos, cisco_xr, cisco_asa, arista_eos,
+#   juniper_junos, mikrotik_routeros, huawei, hp_comware, hp_procurve,
+#   aruba_aoscx, fortinet, paloalto_panos, dell_os10, extreme_exos,
+#   vyos, ubiquiti_edgerouter, linux
+# სრული სია: https://github.com/ktbyers/netmiko/blob/develop/PLATFORMS.md
+devices:
+  R1:
+    host: 10.0.0.1
+    device_type: cisco_ios
+    site: HQ
+    role: router
+    description: ინტერნეტ edge router
+
+  SW-Core-1:
+    host: 10.0.0.2
+    device_type: cisco_ios
+    site: HQ
+    role: core-switch
+
+  MT-Branch:
+    host: 10.20.0.1
+    device_type: mikrotik_routeros
+    credentials: mikrotik
+    site: Branch-1
+    role: router
+    port: 22
+
+  FW-01:
+    host: 10.0.0.254
+    device_type: fortinet
+    site: HQ
+    role: firewall
