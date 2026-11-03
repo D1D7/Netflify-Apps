@@ -115,6 +115,10 @@
     </section>
 
     <section id="view-dash" class="view scroll" hidden>
+      <div class="pane-head">
+        <span>ქსელი</span>
+        <button type="button" id="pane-expand" class="link-btn">სრულად<svg class="icon"><use href="#i-chevron"/></svg></button>
+      </div>
       <div class="hero" id="hero">
         <div class="hero-top">
           <div>
@@ -127,10 +131,10 @@
         <div class="hero-sub" id="dash-sub"></div>
       </div>
 
-      <div class="tiles" id="tiles"></div>
+      <div class="tiles pane-hide" id="tiles"></div>
 
-      <h2 class="section">სწრაფი მოქმედებები</h2>
-      <div class="actions" id="dash-actions"></div>
+      <h2 class="section pane-hide">სწრაფი მოქმედებები</h2>
+      <div class="actions pane-hide" id="dash-actions"></div>
 
       <div class="section-row">
         <h2 class="section">მოწყობილობები</h2>
@@ -139,7 +143,7 @@
           <button type="button" data-filter="down">გათიშული</button>
         </div>
       </div>
-      <label class="search" id="dev-search-wrap" hidden>
+      <label class="search pane-hide" id="dev-search-wrap" hidden>
         <svg class="icon"><use href="#i-search"/></svg>
         <input id="dev-search" type="search" placeholder="ძებნა: სახელი, IP, საიტი">
       </label>

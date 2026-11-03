@@ -1,21 +1,28 @@
 {
+  "id": "/",
   "name": "NetAgent — ქსელის ასისტენტი",
   "short_name": "NetAgent",
   "description": "AI ასისტენტი ქსელის მონიტორინგისა და დიაგნოსტიკისთვის",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#fcfcfb",
+  "orientation": "any",
+  "background_color": "#f6f7f9",
   "theme_color": "#2a78d6",
   "lang": "ka",
+  "categories": ["utilities", "productivity"],
   "icons": [
     {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
     {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
     {"src": "/static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
   ],
+  "screenshots": [
+    {"src": "/static/screenshot-narrow.jpg", "sizes": "540x1170", "type": "image/jpeg", "form_factor": "narrow", "label": "ქსელის მდგომარეობა"},
+    {"src": "/static/screenshot-wide.jpg", "sizes": "1080x928", "type": "image/jpeg", "form_factor": "wide", "label": "ჩატი და ქსელი ერთად — Galaxy Z Fold"}
+  ],
   "shortcuts": [
     {"name": "სტატუსი", "url": "/?cmd=%2Fstatus", "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
-    {"name": "რეპორტი", "url": "/?cmd=%2Freport", "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]}
+    {"name": "რეპორტი", "url": "/?cmd=%2Freport", "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]},
+    {"name": "აუდიტი", "url": "/?cmd=%2Faudit", "icons": [{"src": "/static/icon-192.png", "sizes": "192x192"}]}
   ]
 }

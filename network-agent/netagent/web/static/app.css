@@ -340,7 +340,8 @@ code, pre { font-family: var(--mono); }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow-1); min-width: 0; }
 .tile-label { font-size: 12px; color: var(--text-2); font-weight: 600; display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-label .icon { width: 14px; height: 14px; }
-.tile-value { font-size: 22px; font-weight: 700; margin-top: 4px; white-space: nowrap; }
+.tile-value { font-size: 22px; font-weight: 700; margin-top: 4px; white-space: nowrap; line-height: 1.15; }
+.tile-sub { font-size: 11px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile.bad .tile-value, .tile.bad .tile-label .icon { color: var(--critical); }
 
 .section { font-size: 14px; font-weight: 700; color: var(--text-2); margin: 24px 2px 10px; }
@@ -362,7 +363,7 @@ code, pre { font-family: var(--mono); }
 }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font-size: 15px; }
 
-.devices { display: grid; gap: 8px; }
+.devices { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .device {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%;
   padding: 12px 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border);
@@ -379,13 +380,17 @@ code, pre { font-family: var(--mono); }
 .dev-sub { font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-right { display: grid; justify-items: end; gap: 2px; }
 .dev-lat { font-size: 13px; font-weight: 700; white-space: nowrap; }
-.device.down .dev-lat { color: var(--critical); }
+.device.down .dev-sub { color: var(--critical); font-weight: 600; }
+/* grid items default to min-width:auto and would grow past narrow panes */
+.device, .event, .tile, .action { min-width: 0; }
+/* ellipsis only works on block boxes: these are <span>s */
+.dev-sub, .file-name, .file-sub { display: block; min-width: 0; }
 .spark { width: 76px; height: 24px; display: block; overflow: visible; }
 .spark path { fill: none; stroke: var(--spark); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .spark circle { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
 .empty-note { font-size: 14px; color: var(--text-2); background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 16px; text-align: center; }
 
-.timeline { display: grid; gap: 8px; }
+.timeline { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .event {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 12px 14px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-1);
@@ -445,9 +450,159 @@ button.list-row:active { background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
-@media (min-width: 720px) {
-  .app { max-width: 820px; margin: 0 auto; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
-  .msg { max-width: 76%; }
-  .suggestions { grid-template-columns: repeat(4, 1fr); }
-  .devices { grid-template-columns: 1fr 1fr; }
+/* ====================================================================
+   Responsive layouts
+   - compact  < 600px : phones — Galaxy S23 (~360px), Z Fold6 cover screen (~344px)
+   - medium  >= 600px : Z Fold6 unfolded (~707x823), phones in landscape → navigation rail
+   - two-pane         : unfolded Fold / tablets / desktop → chat + network side by side
+   - viewport segments: Fold in Flex mode → panes split exactly at the hinge
+   ==================================================================== */
+
+.pane-head { display: none; }
+
+/* -- compact: narrow phones ------------------------------------------- */
+@media (max-width: 380px) {
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .logo { width: 30px; height: 30px; }
+  .title { font-size: 16px; }
+  .subtitle { font-size: 11.5px; }
+  .status-pill { height: 32px; padding: 0 11px; font-size: 13px; }
+  .view.scroll { padding: 4px 12px 24px; }
+  .messages { padding: 12px 10px 6px; gap: 10px; }
+  .msg { max-width: 92%; }
+  .msg.bot { padding: 11px 12px; }
+  .md { font-size: 14.5px; }
+  .md th, .md td { padding: 7px 8px; }
+  .code pre { padding: 6px 12px 10px; font-size: 12px; }
+  .suggestions { gap: 8px; }
+  .suggestion { padding: 11px; min-height: 88px; font-size: 13px; }
+  .quick { padding: 4px 10px 8px; gap: 6px; }
+  .chip { height: 32px; padding: 0 11px; font-size: 13px; }
+  .composer { margin: 0 8px 8px; }
+  .hero { padding: 16px; }
+  .hero-value { font-size: 44px; }
+  .tiles, .actions { gap: 8px; }
+  .tile { padding: 10px; }
+  .tile-label { font-size: 11px; gap: 4px; }
+  .tile-value { font-size: 19px; }
+  .action { padding: 10px; font-size: 12.5px; gap: 8px; }
+  .a-ico { width: 32px; height: 32px; }
+  .device { padding: 11px 12px; gap: 10px; }
+  .dev-status { width: 32px; height: 32px; }
+  .spark { width: 60px; }
+  .section-row { flex-wrap: wrap; }
+  .list-row { padding: 10px 12px; gap: 10px; }
+  .list-row .segmented button { padding: 5px 8px; font-size: 12px; }
+  .tabbar .tab-ico { width: 54px; }
 }
+
+/* -- medium and up: navigation rail instead of the bottom bar ---------- */
+@media (min-width: 600px) {
+  .app {
+    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "rail top" "rail main";
+  }
+  .topbar { grid-area: top; padding: 10px 20px; }
+  .view { grid-area: main; }
+  .tabbar {
+    grid-area: rail; grid-template-columns: 1fr; grid-auto-rows: min-content; align-content: start; gap: 4px;
+    border-top: 0; border-right: 1px solid var(--border); padding: 14px 0 calc(14px + var(--safe-bottom));
+  }
+  .tabbar button { min-height: 66px; font-size: 11px; padding: 4px 2px; text-align: center; line-height: 1.2; }
+  .tab-ico { width: 56px; height: 32px; }
+  .toast { bottom: calc(24px + var(--safe-bottom)); }
+
+  /* single-pane views keep a comfortable reading width */
+  #view-chat .messages { padding-left: max(16px, calc((100% - 760px) / 2)); padding-right: max(16px, calc((100% - 760px) / 2)); }
+  #view-chat .dock { width: 100%; max-width: 780px; margin: 0 auto; }
+  .msg { max-width: 80%; }
+  .msg.bot.wide { max-width: 100%; }
+  .view.scroll { padding: 8px 24px 32px; }
+  #view-settings > * { max-width: 640px; margin-left: auto; margin-right: auto; }
+  .suggestions { max-width: 620px; margin: 0 auto; }
+  .tiles { gap: 12px; }
+  .actions { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .devices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* -- two-pane: chat + network side panel (class set by app.js) ---------- */
+.app.two-pane[data-view="chat"] {
+  grid-template-columns: 88px minmax(330px, 1fr) minmax(270px, 0.8fr);
+  grid-template-areas: "rail top top" "rail main side";
+}
+.app.two-pane[data-view="chat"] #view-dash {
+  grid-area: side; border-left: 1px solid var(--border); padding: 0 14px 20px; background: var(--bg);
+}
+.app.two-pane[data-view="chat"] #view-chat .messages { padding-left: 16px; padding-right: 16px; }
+.app.two-pane[data-view="chat"] #view-chat .dock { max-width: none; }
+.app.two-pane[data-view="chat"] .msg { max-width: 88%; }
+.app.two-pane[data-view="chat"] .msg.bot.wide { max-width: 100%; }
+.app.two-pane[data-view="chat"] .suggestions { grid-template-columns: 1fr 1fr; }
+/* the side panel is a compact network view */
+.app.two-pane[data-view="chat"] .pane-head {
+  display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 1;
+  margin: 0 -14px; padding: 14px 14px 8px; background: var(--bg); font-weight: 700; font-size: 15px;
+}
+.app.two-pane[data-view="chat"] #view-dash .pane-hide { display: none !important; }
+.app.two-pane[data-view="chat"] #view-dash .hero { margin-top: 0; padding: 14px; }
+.app.two-pane[data-view="chat"] #view-dash .hero-value { font-size: 40px; }
+.app.two-pane[data-view="chat"] #view-dash .devices,
+.app.two-pane[data-view="chat"] #view-dash .timeline { grid-template-columns: minmax(0, 1fr); }
+.app.two-pane[data-view="chat"] #view-dash .section-row { flex-wrap: wrap; gap: 4px 10px; }
+.app.two-pane[data-view="chat"] #view-dash .section-row .section { margin-bottom: 4px; }
+.app.two-pane[data-view="chat"] #view-dash .segmented { margin-bottom: 8px; }
+.app.two-pane[data-view="chat"] #view-dash .segmented button { padding: 4px 10px; font-size: 12.5px; }
+.app.two-pane[data-view="chat"] #view-dash .device { padding: 10px 12px; gap: 10px; }
+.app.two-pane[data-view="chat"] #view-dash .dev-status { width: 32px; height: 32px; }
+.app.two-pane[data-view="chat"] #view-dash .section { margin-top: 18px; }
+.link-btn {
+  display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; color: var(--accent);
+  font-size: 13.5px; font-weight: 600; padding: 6px 4px;
+}
+.link-btn .icon { width: 16px; height: 16px; }
+
+/* -- large screens (desktop, tablets in landscape) ---------------------- */
+@media (min-width: 1100px) {
+  .app { max-width: 1440px; margin: 0 auto; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
+  .app.two-pane[data-view="chat"] { grid-template-columns: 88px minmax(420px, 1fr) 380px; }
+  .devices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .suggestions { grid-template-columns: repeat(4, 1fr); max-width: 860px; }
+}
+
+/* -- Z Fold in Flex mode, fold vertical: chat left of the hinge, network right of it */
+@media (horizontal-viewport-segments: 2) {
+  .app.two-pane[data-view="chat"] {
+    grid-template-columns:
+      env(viewport-segment-width 0 0)
+      calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0))
+      env(viewport-segment-width 1 0);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "top . side" "main . side" "rail . side";
+  }
+  .app.two-pane[data-view="chat"] .tabbar {
+    grid-template-columns: repeat(3, 1fr); grid-auto-rows: auto; border-right: 0; border-top: 1px solid var(--border);
+    padding: 6px 8px calc(6px + var(--safe-bottom));
+  }
+  .app.two-pane[data-view="chat"] .tabbar button { min-height: 56px; }
+}
+
+/* -- Z Fold in Flex mode, fold horizontal (laptop posture):
+      conversation above the hinge, input and quick actions below it ------------ */
+@media (vertical-viewport-segments: 2) {
+  #view-chat {
+    display: grid;
+    grid-template-rows:
+      calc(env(viewport-segment-bottom 0 0) - var(--topbar-h, 56px))
+      calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
+      minmax(0, 1fr);
+  }
+  #view-chat .messages { grid-row: 1; }
+  #view-chat .dock { grid-row: 3; align-self: start; padding-top: 10px; }
+  #view-chat .quick { flex-wrap: wrap; overflow: visible; }
+}
+
+/* side panel: give device names room */
+.app.two-pane[data-view="chat"] #view-dash .spark { width: 54px; }
+.app.two-pane[data-view="chat"] #view-dash .dev-lat { font-size: 12.5px; }

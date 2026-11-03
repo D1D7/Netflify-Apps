@@ -15,6 +15,16 @@ const state = {
   overview: null,
 };
 
+// Layout: two panes (chat + network) on wide screens such as a Z Fold unfolded,
+// or when a Fold in Flex mode reports two side-by-side viewport segments.
+const MQ_WIDE = matchMedia("(min-width: 680px) and (min-height: 500px)");
+const MQ_SEG_SIDE = matchMedia("(horizontal-viewport-segments: 2)");
+const MQ_SEG_STACK = matchMedia("(vertical-viewport-segments: 2)");
+
+function isTwoPane() {
+  return (MQ_WIDE.matches || MQ_SEG_SIDE.matches) && !MQ_SEG_STACK.matches;
+}
+
 const VIEW_TITLES = {
   chat: ["NetAgent", "AI ქსელის ასისტენტი"],
   dash: ["ქსელი", "მოწყობილობები და მოვლენები"],
@@ -436,7 +446,7 @@ const QUICK = [
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
   ["save", "green", "Backup", "/backup"],
-  ["server", "blue", "მოწყობილობები", "/devices"],
+  ["server", "blue", "Inventory", "/devices"],
   ["note", "violet", "შენიშვნები", "/notes"],
   ["help", "gray", "ბრძანებები", "/help"],
 ];
@@ -516,12 +526,16 @@ function renderDevices() {
   for (const d of list) {
     const b = el("button", `device${d.up ? "" : " down"}`);
     b.type = "button";
-    const latency = d.up ? (d.latency_ms != null ? `${d.latency_ms < 10 ? d.latency_ms.toFixed(1) : Math.round(d.latency_ms)} ms` : "up") : "მიუწვდომელი";
+    const latency = d.up ? (d.latency_ms != null ? `${d.latency_ms < 10 ? d.latency_ms.toFixed(1) : Math.round(d.latency_ms)} ms` : "up") : "";
     b.innerHTML = `<span class="dev-status">${icon(d.up ? "check" : "alert")}</span>
       <span class="dev-main"><span class="dev-name"><span></span>${d.muted ? icon("mute") : ""}${d.watched ? icon("eye") : ""}</span><span class="dev-sub"></span></span>
       <span class="dev-right"><span class="dev-lat"></span>${d.up ? sparkline(d.spark || []) : ""}</span>`;
     b.querySelector(".dev-name span").textContent = d.name;
-    b.querySelector(".dev-sub").textContent = [d.host, d.site || d.type].filter(Boolean).join(" · ") + (d.up ? "" : ` · ${d.reason || ""}`);
+    // Offline state is spelled out in text, not color alone: "მიუწვდომელი · timeout".
+    b.querySelector(".dev-sub").textContent = d.up
+      ? [d.host, d.site || d.type].filter(Boolean).join(" · ")
+      : ["მიუწვდომელი", d.reason].filter(Boolean).join(" · ");
+    b.title = `${d.name} — ${d.host}`;
     b.querySelector(".dev-lat").textContent = latency;
     b.addEventListener("click", () => send(`/health ${d.name}`));
     box.appendChild(b);
@@ -550,15 +564,18 @@ function renderOverview() {
 
   const tiles = $("#tiles");
   tiles.replaceChildren();
-  const tile = (ico, label, value, bad) => {
-    const t = el("div", `tile${bad ? " bad" : ""}`, `<div class="tile-label">${icon(ico)}<span></span></div><div class="tile-value"></div>`);
+  const tile = (ico, label, value, sub, bad) => {
+    const t = el("div", `tile${bad ? " bad" : ""}`,
+      `<div class="tile-label">${icon(ico)}<span></span></div><div class="tile-value"></div><div class="tile-sub"></div>`);
     t.querySelector(".tile-label span").textContent = label;
     t.querySelector(".tile-value").textContent = value;
+    t.querySelector(".tile-sub").textContent = sub;
     tiles.appendChild(t);
   };
-  tile("alert", "გათიშული", String(down), down > 0);
-  tile("bell", "ალერტი 24 სთ", String(data.alerts_24h ?? 0), false);
-  tile("dollar", "AI დღეს", `$${data.usage.today.toFixed(2)}`, data.usage.budget > 0 && data.usage.today >= data.usage.budget);
+  tile("alert", "გათიშული", String(down), "ახლა", down > 0);
+  tile("bell", "ალერტები", String(data.alerts_24h ?? 0), "ბოლო 24 სთ", false);
+  tile("dollar", "AI ხარჯი", `$${data.usage.today.toFixed(2)}`, "დღეს",
+    data.usage.budget > 0 && data.usage.today >= data.usage.budget);
 
   $("#dev-search-wrap").hidden = data.devices.length < 8;
   renderDevices();
@@ -645,14 +662,24 @@ async function setPush(enable) {
 
 // ---------------------------------------------------------------- views & auth
 
+function applyLayout() {
+  const two = isTwoPane();
+  const app = $("#app");
+  app.classList.toggle("two-pane", two);
+  app.dataset.view = state.view;
+  const sidePane = two && state.view === "chat";
+  for (const v of ["chat", "dash", "settings"]) $(`#view-${v}`).hidden = !(v === state.view || (sidePane && v === "dash"));
+  const [title, sub] = VIEW_TITLES[state.view];
+  $("#view-title").textContent = title;
+  $("#view-sub").textContent = sidePane ? "ჩატი და ქსელი ერთად" : sub;
+  return sidePane;
+}
+
 function switchView(name) {
   state.view = name;
-  for (const v of ["chat", "dash", "settings"]) $(`#view-${v}`).hidden = v !== name;
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
-  const [title, sub] = VIEW_TITLES[name];
-  $("#view-title").textContent = title;
-  $("#view-sub").textContent = sub;
-  if (name === "dash") loadOverview();
+  const sidePane = applyLayout();
+  if (name === "dash" || (sidePane && !state.overview)) loadOverview();
   if (name === "settings") {
     refreshPushUI();
     apiJson("/api/command", { method: "POST", json: { line: "/usage" } })
@@ -673,6 +700,7 @@ function showLogin(info = {}) {
 function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
+  switchView(state.view);
   renderAll();
   loadOverview();
   const cmd = new URLSearchParams(location.search).get("cmd");
@@ -754,6 +782,17 @@ async function init() {
 
   // navigation & dashboard
   document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
+  $("#pane-expand").addEventListener("click", () => switchView("dash"));
+  // Re-layout when the Fold is opened/closed or rotated.
+  for (const mq of [MQ_WIDE, MQ_SEG_SIDE, MQ_SEG_STACK]) mq.addEventListener("change", () => { applyLayout(); scrollDown(); });
+  // Short placeholder when the composer is narrow (S23, Fold cover screen, two-pane chat).
+  new ResizeObserver(([entry]) => {
+    input.placeholder = entry.contentRect.width < 420 ? "მკითხე რამე…" : "მკითხე რამე ან დაწერე /status";
+  }).observe($("#composer"));
+  // Flex-mode layout needs the top bar height to put the hinge between messages and input.
+  new ResizeObserver(([entry]) => {
+    document.documentElement.style.setProperty("--topbar-h", `${Math.round(entry.target.getBoundingClientRect().height)}px`);
+  }).observe($(".topbar"));
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", loadOverview);
   document.querySelectorAll("#dev-filter button").forEach((b) => b.addEventListener("click", () => {
