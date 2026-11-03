@@ -64,6 +64,28 @@ class LatencyHistory:
             day += timedelta(days=1)
         return sorted(points)
 
+    def read_all(self, hours: float = 2, now: datetime | None = None) -> dict[str, list[tuple[datetime, bool, float | None]]]:
+        """All devices' points in one pass over the files (for dashboard sparklines)."""
+        now = now or datetime.now()
+        start = now - timedelta(hours=hours)
+        out: dict[str, list[tuple[datetime, bool, float | None]]] = {}
+        day = start.date()
+        while day <= now.date():
+            path = self._file(day)
+            if path.exists():
+                with path.open(newline="", encoding="utf-8") as fh:
+                    for row in csv.reader(fh):
+                        if len(row) != 4:
+                            continue
+                        try:
+                            ts = datetime.fromisoformat(row[0])
+                        except ValueError:
+                            continue
+                        if start <= ts <= now:
+                            out.setdefault(row[1], []).append((ts, row[2] == "1", float(row[3]) if row[3] else None))
+            day += timedelta(days=1)
+        return {k: sorted(v) for k, v in out.items()}
+
     def stats(self, device: str, hours: float = 24) -> dict:
         pts = self.read(device, hours)
         if not pts:

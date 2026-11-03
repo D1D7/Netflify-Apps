@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -25,6 +26,7 @@ STATIC = Path(__file__).parent / "static"
 COOKIE = "na_session"
 SESSION_ID = "app"  # single-user app: one conversation
 MAX_FILES = 5
+SPARK_POINTS = 24  # 2 hours at the default 5-minute monitoring interval
 _SAFE_FILE = re.compile(r"^[\w.-]+$")
 PUBLIC_API = {"/api/login", "/api/me"}
 
@@ -120,18 +122,25 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     async def overview():
         inv = services.inventory()
         results = await asyncio.to_thread(check_many, list(inv.devices.values()), 2.0, 0)
+        history = await asyncio.to_thread(services.history.read_all, 2)
         devices = []
         for r in sorted(results, key=lambda r: (r.up, r.device)):
             d = inv.devices[r.device]
+            points = history.get(r.device, [])[-SPARK_POINTS:]
             devices.append({"name": r.device, "host": r.host, "type": d.device_type, "site": d.site, "role": d.role,
                             "up": r.up, "latency_ms": r.latency_ms, "reason": r.reason,
-                            "muted": services.mutes.is_muted(r.device), "watched": bool(d.watch)})
+                            "muted": services.mutes.is_muted(r.device), "watched": bool(d.watch),
+                            "spark": [p[2] if p[1] else None for p in points]})
         today = services.usage.day()
+        alerts = services.alerts.recent(50)
+        day_ago = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
         return {
             "devices": devices,
             "up": sum(r.up for r in results),
             "total": len(results),
-            "alerts": services.alerts.recent(30),
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config"}),
+            "alerts": alerts[:30],
             "mutes": services.mutes.active(),
             "usage": {"today": round(today.get("cost", 0.0), 3), "requests": today.get("requests", 0),
                       "month": services.usage.month_cost(), "budget": services.usage.daily_budget_usd},

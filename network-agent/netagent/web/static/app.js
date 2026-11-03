@@ -1,6 +1,7 @@
 // NetAgent app (vanilla JS, no build step)
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = "na.chat.v1";
+const THEME_KEY = "na.theme";
 const MAX_STORED = 200;
 
 const state = {
@@ -9,7 +10,59 @@ const state = {
   busy: false,
   installPrompt: null,
   view: "chat",
+  devFilter: "all",
+  devSearch: "",
+  overview: null,
 };
+
+const VIEW_TITLES = {
+  chat: ["NetAgent", "AI ქსელის ასისტენტი"],
+  dash: ["ქსელი", "მოწყობილობები და მოვლენები"],
+  settings: ["პარამეტრები", "აპი და ანგარიში"],
+};
+
+// ---------------------------------------------------------------- small helpers
+
+function icon(name, cls = "") {
+  return `<svg class="icon ${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+let toastTimer;
+function toast(text) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+// ---------------------------------------------------------------- theme
+
+function applyTheme(mode) {
+  const root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.dataset.theme = mode;
+  else delete root.dataset.theme;
+  document.querySelectorAll("#theme button").forEach((b) => b.classList.toggle("on", b.dataset.theme === (mode || "auto")));
+  const dark = mode === "dark" || (mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", dark ? "#0d1117" : "#f6f7f9"));
+}
+
+function loadTheme() {
+  let mode = "auto";
+  try { mode = localStorage.getItem(THEME_KEY) || "auto"; } catch { /* storage unavailable */ }
+  applyTheme(mode);
+}
 
 // ---------------------------------------------------------------- API
 
@@ -24,7 +77,7 @@ async function api(path, { method = "GET", json, form } = {}) {
   }
   const res = await fetch(path, { method, headers, body, credentials: "same-origin" });
   if (res.status === 401 && path !== "/api/login") {
-    showLogin();
+    showLogin(await fetch("/api/me").then((r) => r.json()).catch(() => ({})));
     throw new Error("unauthorized");
   }
   return res;
@@ -39,10 +92,6 @@ async function apiJson(path, opts) {
 
 // ---------------------------------------------------------------- Markdown (safe subset)
 
-function esc(s) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
 function inline(s) {
   return esc(s)
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
@@ -50,12 +99,16 @@ function inline(s) {
     .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?]|$)/g, "$1<em>$2</em>");
 }
 
+const COPY_LABEL = `${icon("copy")}<span>კოპირება</span>`;
+const COPY_BTN = `<button type="button" class="copy" aria-label="კოპირება">${COPY_LABEL}</button>`;
+
 function md(text) {
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   const out = [];
   let i = 0;
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
   const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const isList = (l) => /^\s*([-*•]|\d+[.)])\s+/.test(l);
   while (i < lines.length) {
     const line = lines[i];
     if (/^```/.test(line.trim())) {
@@ -63,7 +116,7 @@ function md(text) {
       i++;
       while (i < lines.length && !/^```/.test(lines[i].trim())) buf.push(lines[i++]);
       i++;
-      out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`);
+      out.push(`<div class="code"><div class="code-head"><span>output</span>${COPY_BTN}</div><pre><code>${esc(buf.join("\n"))}</code></pre></div>`);
       continue;
     }
     if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
@@ -77,13 +130,10 @@ function md(text) {
     }
     const h = line.match(/^#{1,6}\s+(.*)/);
     if (h) { out.push(`<h4>${inline(h[1])}</h4>`); i++; continue; }
-    if (/^\s*([-*•]|\d+[.)])\s+/.test(line)) {
+    if (isList(line)) {
       const ordered = /^\s*\d+[.)]/.test(line);
       const items = [];
-      while (i < lines.length && /^\s*([-*•]|\d+[.)])\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*([-*•]|\d+[.)])\s+/, ""));
-        i++;
-      }
+      while (i < lines.length && isList(lines[i])) items.push(lines[i++].replace(/^\s*([-*•]|\d+[.)])\s+/, ""));
       const tag = ordered ? "ol" : "ul";
       out.push(`<${tag}>${items.map((it) => `<li>${inline(it)}</li>`).join("")}</${tag}>`);
       continue;
@@ -91,7 +141,7 @@ function md(text) {
     if (!line.trim()) { i++; continue; }
     const para = [];
     while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i].trim()) && !/^#{1,6}\s/.test(lines[i])
-           && !/^\s*([-*•]|\d+[.)])\s+/.test(lines[i]) && !(lines[i].includes("|") && isTableSep(lines[i + 1] || ""))) {
+           && !isList(lines[i]) && !(lines[i].includes("|") && isTableSep(lines[i + 1] || ""))) {
       para.push(inline(lines[i++]));
     }
     out.push(`<p>${para.join("<br>")}</p>`);
@@ -99,116 +149,97 @@ function md(text) {
   return out.join("");
 }
 
-// ---------------------------------------------------------------- chat rendering
+// ---------------------------------------------------------------- chat storage & rendering
 
 function save() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state.messages.slice(-MAX_STORED)));
-  } catch { /* storage full or disabled: chat still works in memory */ }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state.messages.slice(-MAX_STORED))); } catch { /* full or disabled */ }
 }
 
 function load() {
-  try {
-    state.messages = JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
-  } catch {
-    state.messages = [];
-  }
+  try { state.messages = JSON.parse(localStorage.getItem(STORE_KEY) || "[]"); } catch { state.messages = []; }
 }
 
 function timeLabel(ts) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" });
 }
 
 function fileUrl(name, download = false) {
   return `/api/files/${encodeURIComponent(name)}${download ? "?download=1" : ""}`;
 }
 
-function renderMessage(m) {
-  const el = document.createElement("div");
-  el.className = `msg ${m.role}${m.alert ? " alert" : ""}`;
-  if (m.role === "user") {
-    if (m.thumbs?.length) {
-      const t = document.createElement("div");
-      t.className = "thumbs";
-      for (const src of m.thumbs) {
-        const img = document.createElement("img");
-        img.src = src;
-        img.alt = "";
-        t.appendChild(img);
-      }
-      el.appendChild(t);
-    }
-    if (m.files?.length) {
-      const f = document.createElement("div");
-      f.className = "small";
-      f.textContent = "📎 " + m.files.join(", ");
-      el.appendChild(f);
-    }
-    if (m.text) el.appendChild(document.createTextNode(m.text));
-  } else {
-    const body = document.createElement("div");
-    body.className = "md";
-    body.innerHTML = md(m.text);
-    el.appendChild(body);
-    if (m.image) {
-      const img = document.createElement("img");
-      img.className = "result";
-      img.src = fileUrl(m.image);
-      img.alt = m.text || "chart";
-      el.appendChild(img);
-    }
-    for (const name of m.files || []) {
-      const a = document.createElement("a");
-      a.className = "file-link";
-      a.href = fileUrl(name, true);
-      a.textContent = `${/\.xlsx$/.test(name) ? "📊" : /\.png$/.test(name) ? "🖼" : "📄"} ${name}`;
-      el.appendChild(a);
-    }
-    if (m.buttons?.length) {
-      const b = document.createElement("div");
-      b.className = "buttons";
-      for (const btn of m.buttons) {
-        const x = document.createElement("button");
-        x.type = "button";
-        x.textContent = btn.label;
-        x.addEventListener("click", () => send(btn.command, { silent: false }));
-        b.appendChild(x);
-      }
-      el.appendChild(b);
-    }
-  }
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.textContent = timeLabel(m.ts);
-  el.appendChild(meta);
-  return el;
+function fileCard(name) {
+  const kind = /\.xlsx$/i.test(name) ? ["table", "green", "Excel ფაილი"] : /\.png$/i.test(name) ? ["image", "blue", "სურათი"] : ["file", "blue", "ტექსტური ფაილი"];
+  const a = el("a", "file-card", `<span class="file-ico ${kind[1]}">${icon(kind[0])}</span>
+    <span class="file-meta"><span class="file-name"></span><span class="file-sub">${kind[2]} · ჩამოტვირთვა</span></span>${icon("download")}`);
+  a.href = fileUrl(name, true);
+  a.querySelector(".file-name").textContent = name;
+  return a;
 }
 
-const EXAMPLES = [
-  "როგორაა ქსელი? რომელიმე მოწყობილობა ხომ არ არის გათიშული?",
-  "R1-ის ინტერფეისების IP-ები მაჩვენე",
-  "რომელი IP-ებია თავისუფალი 192.168.1.0/24-ში?",
-  "რამდენად უსაფრთხოა ქსელი?",
+function renderMessage(m) {
+  const box = el("div", `msg ${m.role}`);
+  if (m.role === "user") {
+    if (m.thumbs?.length) {
+      const t = el("div", "thumbs");
+      for (const src of m.thumbs) { const img = el("img"); img.src = src; img.alt = ""; t.appendChild(img); }
+      box.appendChild(t);
+    }
+    if (m.files?.length) {
+      const f = el("div", "attached", icon("file"));
+      f.appendChild(document.createTextNode(m.files.join(", ")));
+      box.appendChild(f);
+    }
+    if (m.text) box.appendChild(document.createTextNode(m.text));
+  } else {
+    const body = el("div", "md", md(m.text));
+    box.appendChild(body);
+    if (body.querySelector("table, .code") || m.image) box.classList.add("wide");
+    if (m.image) {
+      const img = el("img", "result");
+      img.src = fileUrl(m.image);
+      img.alt = m.text || "chart";
+      img.loading = "lazy";
+      box.appendChild(img);
+    }
+    for (const name of m.files || []) box.appendChild(fileCard(name));
+    if (m.buttons?.length) {
+      const b = el("div", "buttons");
+      for (const btn of m.buttons) {
+        const x = el("button");
+        x.type = "button";
+        x.textContent = btn.label;
+        x.addEventListener("click", () => send(btn.command));
+        b.appendChild(x);
+      }
+      box.appendChild(b);
+    }
+  }
+  box.appendChild(el("div", "meta", esc(timeLabel(m.ts))));
+  return box;
+}
+
+const SUGGESTIONS = [
+  ["pulse", "blue", "როგორაა ქსელი? რომელიმე მოწყობილობა ხომ არ არის გათიშული?"],
+  ["server", "green", "R1-ის ინტერფეისების IP-ები მაჩვენე"],
+  ["search", "violet", "რომელი IP-ებია თავისუფალი 192.168.1.0/24-ში?"],
+  ["shield", "amber", "რამდენად უსაფრთხოა ქსელი?"],
 ];
 
 function renderAll() {
   const box = $("#messages");
   box.replaceChildren();
   if (!state.messages.length) {
-    const e = document.createElement("div");
-    e.className = "empty";
-    e.innerHTML = `<div class="empty-icon">🤖</div><p><strong>გამარჯობა!</strong><br>მკითხე რამე ქსელზე, გამომიგზავნე ფოტო ან config ფაილი.</p>`;
-    const ex = document.createElement("div");
-    ex.className = "examples";
-    for (const q of EXAMPLES) {
-      const b = document.createElement("button");
+    const e = el("div", "empty", `<img src="/static/icon-192.png" alt="" width="64" height="64" class="empty-logo">
+      <h3>გამარჯობა 👋</h3><p>მკითხე რამე ქსელზე, გამომიგზავნე ფოტო ან config ფაილი.</p>`);
+    const grid = el("div", "suggestions");
+    for (const [ico, color, q] of SUGGESTIONS) {
+      const b = el("button", "suggestion", `<span class="s-ico ${color}">${icon(ico)}</span><span></span>`);
       b.type = "button";
-      b.textContent = q;
+      b.lastElementChild.textContent = q;
       b.addEventListener("click", () => send(q));
-      ex.appendChild(b);
+      grid.appendChild(b);
     }
-    e.appendChild(ex);
+    e.appendChild(grid);
     box.appendChild(e);
     return;
   }
@@ -230,22 +261,23 @@ function addMessage(m) {
   scrollDown();
 }
 
-function pendingBubble() {
-  const el = document.createElement("div");
-  el.className = "msg bot";
-  el.innerHTML = `<div class="typing"><i></i><i></i><i></i></div><ul class="steps"></ul>`;
-  $("#messages").appendChild(el);
+function pendingBubble(title = "ვფიქრობ...") {
+  const box = el("div", "msg bot", `<div class="activity"><div class="activity-head"><span class="spinner"></span><span class="ah-text"></span></div><ul class="steps"></ul></div>`);
+  box.querySelector(".ah-text").textContent = title;
+  if (!state.messages.length) $("#messages").replaceChildren();
+  $("#messages").appendChild(box);
   scrollDown();
   return {
     step(label) {
-      const ul = el.querySelector(".steps");
-      ul.querySelectorAll("li").forEach((li) => li.classList.add("done"));
-      const li = document.createElement("li");
-      li.textContent = label;
+      box.querySelector(".ah-text").textContent = "ვამუშავებ...";
+      const ul = box.querySelector(".steps");
+      ul.querySelectorAll("li .spinner").forEach((s) => s.outerHTML = icon("check"));
+      const li = el("li", "", `<span class="spinner"></span><span></span>`);
+      li.lastElementChild.textContent = label;
       ul.appendChild(li);
       scrollDown();
     },
-    remove() { el.remove(); },
+    remove() { box.remove(); if (!state.messages.length) renderAll(); },
   };
 }
 
@@ -274,22 +306,26 @@ async function readSSE(res, onEvent) {
   }
 }
 
-function setBusy(b) {
-  state.busy = b;
-  $("#send").disabled = b;
+function updateSend() {
+  $("#send").disabled = state.busy || (!$("#input").value.trim() && !state.attachments.length);
 }
 
-async function send(text, { silent = false } = {}) {
+function setBusy(b) {
+  state.busy = b;
+  updateSend();
+}
+
+async function send(text) {
   text = (text ?? "").trim();
   const files = state.attachments.slice();
   if ((!text && !files.length) || state.busy) return;
   switchView("chat");
   setBusy(true);
-  if (!silent) {
-    const thumbs = files.filter((f) => f.preview).map((f) => f.preview);
-    const names = files.filter((f) => !f.preview).map((f) => f.file.name);
-    addMessage({ role: "user", text, thumbs, files: names });
-  }
+  addMessage({
+    role: "user", text,
+    thumbs: files.filter((f) => f.preview).map((f) => f.preview),
+    files: files.filter((f) => !f.preview).map((f) => f.file.name),
+  });
   state.attachments = [];
   renderAttachments();
   try {
@@ -302,13 +338,14 @@ async function send(text, { silent = false } = {}) {
 
 // Deterministic command (no AI). Returns false when the server does not know the command.
 async function runCommand(line) {
-  const pending = pendingBubble();
+  const pending = pendingBubble("ვასრულებ...");
   try {
     const res = await api("/api/command", { method: "POST", json: { line } });
     const data = await res.json().catch(() => ({}));
     pending.remove();
     if (res.status === 400) return false;
     addMessage({ role: "bot", text: data.text || data.error || "", files: data.files, image: data.image, buttons: data.buttons });
+    if (/^\/(mute|unmute|discover-add)/.test(line)) loadOverview();
   } catch (err) {
     pending.remove();
     if (err.message !== "unauthorized") addMessage({ role: "bot", text: `⚠️ ${err.message}` });
@@ -349,21 +386,24 @@ function renderAttachments() {
   const box = $("#attachments");
   box.replaceChildren();
   state.attachments.forEach((a, idx) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = `${a.preview ? "🖼" : "📄"} ${a.file.name}`;
-    const x = document.createElement("button");
+    const chip = el("span", "att");
+    if (a.preview) { const img = el("img"); img.src = a.preview; img.alt = ""; chip.appendChild(img); }
+    else chip.appendChild(el("span", "att-file", icon("file")));
+    const name = el("span", "att-name");
+    name.textContent = a.file.name;
+    chip.appendChild(name);
+    const x = el("button", "att-x", icon("x"));
     x.type = "button";
-    x.textContent = "✕";
     x.setAttribute("aria-label", "წაშლა");
     x.addEventListener("click", () => { state.attachments.splice(idx, 1); renderAttachments(); });
     chip.appendChild(x);
     box.appendChild(chip);
   });
+  updateSend();
 }
 
 async function shrinkImage(file) {
-  // Phone photos are large; resize to max 1600px JPEG so uploads are fast and fit API limits.
+  // Phone photos are large: resize to max 1600px JPEG so uploads are fast and fit the API limit.
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) return file;
   const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
@@ -378,46 +418,51 @@ async function shrinkImage(file) {
 
 async function addFiles(list) {
   for (let file of list) {
-    if (state.attachments.length >= 5) break;
+    if (state.attachments.length >= 5) { toast("მაქსიმუმ 5 ფაილი"); break; }
     let preview = null;
     if (file.type.startsWith("image/")) {
       file = await shrinkImage(file);
-      preview = await new Promise((r) => {
-        const fr = new FileReader();
-        fr.onload = () => r(fr.result);
-        fr.readAsDataURL(file);
-      });
+      preview = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(file); });
     }
     state.attachments.push({ file, preview });
   }
   renderAttachments();
 }
 
-// ---------------------------------------------------------------- dashboard
+// ---------------------------------------------------------------- quick actions
 
 const QUICK = [
-  ["🩺 სტატუსი", "/status"],
-  ["📊 რეპორტი", "/report"],
-  ["🛡 აუდიტი", "/audit"],
-  ["💾 Backup", "/backup"],
-  ["📋 მოწყობილობები", "/devices"],
-  ["📝 შენიშვნები", "/notes"],
-  ["❓ ბრძანებები", "/help"],
+  ["pulse", "blue", "სტატუსი", "/status"],
+  ["report", "violet", "რეპორტი", "/report"],
+  ["shield", "amber", "აუდიტი", "/audit"],
+  ["save", "green", "Backup", "/backup"],
+  ["server", "blue", "მოწყობილობები", "/devices"],
+  ["note", "violet", "შენიშვნები", "/notes"],
+  ["help", "gray", "ბრძანებები", "/help"],
 ];
 
 function renderQuick() {
-  for (const target of [$("#quick"), $("#dash-actions")]) {
-    target.replaceChildren();
-    for (const [label, cmd] of QUICK) {
-      if (target.id === "dash-actions" && cmd === "/help") continue;
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = label;
-      b.addEventListener("click", () => send(cmd));
-      target.appendChild(b);
-    }
+  const chips = $("#quick");
+  chips.replaceChildren();
+  for (const [ico, , label, cmd] of QUICK) {
+    const b = el("button", "chip", `${icon(ico)}<span></span>`);
+    b.type = "button";
+    b.lastElementChild.textContent = label;
+    b.addEventListener("click", () => send(cmd));
+    chips.appendChild(b);
+  }
+  const grid = $("#dash-actions");
+  grid.replaceChildren();
+  for (const [ico, color, label, cmd] of QUICK.slice(0, 6)) {
+    const b = el("button", "action", `<span class="a-ico ${color}">${icon(ico)}</span><span></span>`);
+    b.type = "button";
+    b.lastElementChild.textContent = label;
+    b.addEventListener("click", () => send(cmd));
+    grid.appendChild(b);
   }
 }
+
+// ---------------------------------------------------------------- dashboard
 
 function ago(ts) {
   const s = (Date.now() - new Date(ts).getTime()) / 1000;
@@ -427,51 +472,123 @@ function ago(ts) {
   return new Date(ts).toLocaleString("ka-GE", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// Latency sparkline: line in the de-emphasis hue, current value as an accent dot; gaps where down.
+function sparkline(values) {
+  const pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+  if (pts.length < 2) return "";
+  const W = 76, H = 24, pad = 3;
+  const max = Math.max(...pts.map(([, v]) => v)), min = Math.min(...pts.map(([, v]) => v));
+  const span = Math.max(max - min, 0.5);
+  const x = (i) => pad + (i / Math.max(values.length - 1, 1)) * (W - 2 * pad);
+  const y = (v) => H - pad - ((v - min) / span) * (H - 2 * pad);
+  let d = "";
+  let pen = false;
+  values.forEach((v, i) => {
+    if (v == null) { pen = false; return; }
+    d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+    pen = true;
+  });
+  const [li, lv] = pts[pts.length - 1];
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}"/><circle cx="${x(li).toFixed(1)}" cy="${y(lv).toFixed(1)}" r="2.8"/></svg>`;
+}
+
+const EVENT_STYLE = {
+  down: ["alert", "red"], up: ["check", "green"], watch: ["pulse", "amber"],
+  config: ["note", "violet"], report: ["report", "blue"],
+};
+
+function renderDevices() {
+  const data = state.overview;
+  const box = $("#devices");
+  box.replaceChildren();
+  if (!data) return;
+  if (!data.devices.length) {
+    box.appendChild(el("div", "empty-note", "მოწყობილობები ჯერ არ არის.<br>ჩატში დაწერე: <code>/discover 10.0.0.0/24</code>"));
+    return;
+  }
+  const q = state.devSearch.toLowerCase();
+  const list = data.devices.filter((d) => (state.devFilter === "all" || !d.up)
+    && (!q || `${d.name} ${d.host} ${d.site} ${d.role} ${d.type}`.toLowerCase().includes(q)));
+  if (!list.length) {
+    box.appendChild(el("div", "empty-note", state.devFilter === "down" ? "✅ ყველა მოწყობილობა ხელმისაწვდომია" : "ვერაფერი მოიძებნა"));
+    return;
+  }
+  for (const d of list) {
+    const b = el("button", `device${d.up ? "" : " down"}`);
+    b.type = "button";
+    const latency = d.up ? (d.latency_ms != null ? `${d.latency_ms < 10 ? d.latency_ms.toFixed(1) : Math.round(d.latency_ms)} ms` : "up") : "მიუწვდომელი";
+    b.innerHTML = `<span class="dev-status">${icon(d.up ? "check" : "alert")}</span>
+      <span class="dev-main"><span class="dev-name"><span></span>${d.muted ? icon("mute") : ""}${d.watched ? icon("eye") : ""}</span><span class="dev-sub"></span></span>
+      <span class="dev-right"><span class="dev-lat"></span>${d.up ? sparkline(d.spark || []) : ""}</span>`;
+    b.querySelector(".dev-name span").textContent = d.name;
+    b.querySelector(".dev-sub").textContent = [d.host, d.site || d.type].filter(Boolean).join(" · ") + (d.up ? "" : ` · ${d.reason || ""}`);
+    b.querySelector(".dev-lat").textContent = latency;
+    b.addEventListener("click", () => send(`/health ${d.name}`));
+    box.appendChild(b);
+  }
+}
+
+function renderOverview() {
+  const data = state.overview;
+  if (!data) return;
+  const down = data.total - data.up;
+  const pill = $("#netsum");
+  pill.classList.toggle("ok", data.total > 0 && down === 0);
+  pill.classList.toggle("bad", down > 0);
+  pill.querySelector(".txt").textContent = data.total ? `${data.up}/${data.total}` : "—";
+  const badge = $("#tab-badge");
+  badge.hidden = down === 0;
+  badge.textContent = String(down);
+
+  $("#dash-summary").innerHTML = data.total ? `${data.up}<small> / ${data.total}</small>` : "—";
+  const seg = $("#segbar");
+  seg.querySelector(".up").style.flexGrow = String(data.up);
+  seg.querySelector(".down").style.flexGrow = String(down);
+  seg.querySelector(".down").hidden = down === 0;
+  const checked = new Date(data.checked_at).toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" });
+  $("#dash-sub").innerHTML = `<span>${down ? `🔴 ${down} მიუწვდომელი` : "🟢 ყველაფერი რიგზეა"}</span><span>განახლდა ${esc(checked)}</span>`;
+
+  const tiles = $("#tiles");
+  tiles.replaceChildren();
+  const tile = (ico, label, value, bad) => {
+    const t = el("div", `tile${bad ? " bad" : ""}`, `<div class="tile-label">${icon(ico)}<span></span></div><div class="tile-value"></div>`);
+    t.querySelector(".tile-label span").textContent = label;
+    t.querySelector(".tile-value").textContent = value;
+    tiles.appendChild(t);
+  };
+  tile("alert", "გათიშული", String(down), down > 0);
+  tile("bell", "ალერტი 24 სთ", String(data.alerts_24h ?? 0), false);
+  tile("dollar", "AI დღეს", `$${data.usage.today.toFixed(2)}`, data.usage.budget > 0 && data.usage.today >= data.usage.budget);
+
+  $("#dev-search-wrap").hidden = data.devices.length < 8;
+  renderDevices();
+
+  const al = $("#alerts");
+  al.replaceChildren();
+  if (!data.alerts.length) al.appendChild(el("div", "empty-note", "მოვლენები ჯერ არ ყოფილა."));
+  for (const a of data.alerts.slice(0, 20)) {
+    const [ico, color] = EVENT_STYLE[a.kind] || ["bell", "gray"];
+    const item = el("div", "event", `<span class="ev-ico ${color}">${icon(ico)}</span><div><div class="ev-when"></div><div class="md"></div></div>`);
+    item.querySelector(".ev-when").textContent = ago(a.ts);
+    item.querySelector(".md").innerHTML = md(a.text);
+    al.appendChild(item);
+  }
+  $("#about").textContent = `NetAgent · მოდელი: ${data.model}`;
+}
+
 async function loadOverview() {
+  const btn = $("#dash-refresh");
+  btn.classList.add("spinning");
+  if (!state.overview) {
+    $("#devices").replaceChildren(el("div", "skeleton"), el("div", "skeleton"), el("div", "skeleton"));
+  }
   try {
-    const data = await apiJson("/api/overview");
-    const pill = $("#netsum");
-    pill.textContent = data.total ? `${data.up === data.total ? "🟢" : "🔴"} ${data.up}/${data.total}` : "—";
-    $("#dash-summary").textContent = data.total ? `${data.up}/${data.total} ხელმისაწვდომი` : "inventory ცარიელია";
-    $("#dash-sub").textContent = `AI დღეს: $${data.usage.today.toFixed(2)} · თვეში: $${data.usage.month.toFixed(2)}`;
-    const devs = $("#devices");
-    devs.replaceChildren();
-    if (!data.devices.length) {
-      const p = document.createElement("p");
-      p.className = "muted small";
-      p.textContent = "მოწყობილობები არ არის. ჩატში დაწერე: /discover 10.0.0.0/24";
-      devs.appendChild(p);
-    }
-    for (const d of data.devices) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = `device${d.up ? "" : " down"}`;
-      const latency = d.up ? (d.latency_ms != null ? `${Math.round(d.latency_ms)} ms` : "up") : d.reason || "down";
-      b.innerHTML = `<div class="name"><span class="dot"></span><span></span></div><div class="sub"></div>`;
-      b.querySelector(".name span:last-child").textContent = `${d.name}${d.muted ? " 🔕" : ""}${d.watched ? " 👁" : ""}`;
-      b.querySelector(".sub").textContent = `${d.host} · ${latency}`;
-      b.addEventListener("click", () => send(`/health ${d.name}`));
-      devs.appendChild(b);
-    }
-    const al = $("#alerts");
-    al.replaceChildren();
-    if (!data.alerts.length) {
-      const p = document.createElement("p");
-      p.className = "muted small";
-      p.textContent = "ალერტები ჯერ არ ყოფილა.";
-      al.appendChild(p);
-    }
-    for (const a of data.alerts.slice(0, 20)) {
-      const div = document.createElement("div");
-      div.className = "alert-item";
-      div.innerHTML = `<div class="when"></div><div class="md"></div>`;
-      div.querySelector(".when").textContent = ago(a.ts);
-      div.querySelector(".md").innerHTML = md(a.text);
-      al.appendChild(div);
-    }
-    $("#about").textContent = `მოდელი: ${data.model}`;
+    state.overview = await apiJson("/api/overview");
+    renderOverview();
   } catch (err) {
-    if (err.message !== "unauthorized") $("#netsum").textContent = "⚠️";
+    if (err.message !== "unauthorized") $("#netsum .txt").textContent = "⚠️";
+  } finally {
+    btn.classList.remove("spinning");
   }
 }
 
@@ -486,42 +603,42 @@ function urlB64ToUint8Array(b64) {
 async function pushState() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return { supported: false };
   const reg = await navigator.serviceWorker.ready;
-  const sub = await reg.pushManager.getSubscription();
-  return { supported: true, reg, sub };
+  return { supported: true, reg, sub: await reg.pushManager.getSubscription() };
 }
 
 async function refreshPushUI() {
   const st = await pushState().catch(() => ({ supported: false }));
-  const status = $("#push-status");
   const toggle = $("#push-toggle");
   if (!st.supported) {
-    status.textContent = "ამ ბრაუზერში შეტყობინებები არ არის მხარდაჭერილი (საჭიროა HTTPS — მაგ. Tailscale).";
+    $("#push-status").textContent = "მიუწვდომელია ამ ბრაუზერში (საჭიროა HTTPS, მაგ. Tailscale)";
     toggle.disabled = true;
     $("#push-test").disabled = true;
     return;
   }
   const on = !!st.sub && Notification.permission === "granted";
-  status.textContent = on ? "ჩართულია — ალერტები ამ მოწყობილობაზე მოვა." : "გამორთულია.";
-  toggle.textContent = on ? "გამორთვა" : "ჩართვა";
-  toggle.classList.toggle("primary", !on);
+  toggle.checked = on;
+  toggle.disabled = false;
+  $("#push-status").textContent = on ? "ჩართულია — ალერტები ამ მოწყობილობაზე მოვა" : "გამორთულია";
   $("#push-test").disabled = !on;
 }
 
-async function togglePush() {
+async function setPush(enable) {
   const st = await pushState();
   if (!st.supported) return;
-  if (st.sub) {
+  if (!enable && st.sub) {
     await apiJson("/api/push/unsubscribe", { method: "POST", json: { endpoint: st.sub.endpoint } }).catch(() => {});
     await st.sub.unsubscribe();
-  } else {
+    toast("შეტყობინებები გამოირთო");
+  } else if (enable && !st.sub) {
     const perm = await Notification.requestPermission();
     if (perm !== "granted") {
-      alert("შეტყობინებების ნებართვა არ მოგეცა. ჩართე ბრაუზერის/აპის პარამეტრებში.");
-      return;
+      toast("ნებართვა არ მოგეცა — ჩართე აპის პარამეტრებში");
+    } else {
+      const { key } = await apiJson("/api/push/key");
+      const sub = await st.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+      await apiJson("/api/push/subscribe", { method: "POST", json: sub.toJSON() });
+      toast("🔔 შეტყობინებები ჩაირთო");
     }
-    const { key } = await apiJson("/api/push/key");
-    const sub = await st.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
-    await apiJson("/api/push/subscribe", { method: "POST", json: sub.toJSON() });
   }
   await refreshPushUI();
 }
@@ -532,6 +649,9 @@ function switchView(name) {
   state.view = name;
   for (const v of ["chat", "dash", "settings"]) $(`#view-${v}`).hidden = v !== name;
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
+  const [title, sub] = VIEW_TITLES[name];
+  $("#view-title").textContent = title;
+  $("#view-sub").textContent = sub;
   if (name === "dash") loadOverview();
   if (name === "settings") {
     refreshPushUI();
@@ -563,34 +683,49 @@ function showApp() {
 }
 
 async function init() {
+  loadTheme();
   load();
   renderQuick();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
+  // login
+  $("#pw-toggle").addEventListener("click", () => {
+    const pw = $("#password");
+    pw.type = pw.type === "password" ? "text" : "password";
+  });
   $("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const btn = $("#login-btn");
     $("#login-error").textContent = "";
-    const res = await api("/api/login", { method: "POST", json: { password: $("#password").value, totp: $("#totp").value } });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      $("#login-error").textContent = data.error || "შესვლა ვერ მოხერხდა";
-      return;
+    btn.setAttribute("aria-busy", "true");
+    btn.textContent = "შესვლა...";
+    try {
+      const res = await api("/api/login", { method: "POST", json: { password: $("#password").value, totp: $("#totp").value } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        $("#login-error").textContent = data.error || "შესვლა ვერ მოხერხდა";
+        return;
+      }
+      $("#password").value = "";
+      $("#totp").value = "";
+      showApp();
+    } finally {
+      btn.removeAttribute("aria-busy");
+      btn.textContent = "შესვლა";
     }
-    $("#password").value = "";
-    $("#totp").value = "";
-    showApp();
   });
 
+  // composer
+  const input = $("#input");
+  const autoGrow = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; };
   $("#composer").addEventListener("submit", (e) => {
     e.preventDefault();
-    const text = $("#input").value;
-    $("#input").value = "";
+    const text = input.value;
+    input.value = "";
     autoGrow();
     send(text);
   });
-  const input = $("#input");
-  const autoGrow = () => { input.style.height = "auto"; input.style.height = `${Math.min(input.scrollHeight, 140)}px`; };
-  input.addEventListener("input", autoGrow);
+  input.addEventListener("input", () => { autoGrow(); updateSend(); });
   input.addEventListener("keydown", (e) => {
     // Enter sends on desktop; on phones the keyboard's send key submits the form.
     if (e.key === "Enter" && !e.shiftKey && !("ontouchstart" in window)) {
@@ -604,11 +739,40 @@ async function init() {
   });
   $("#file").addEventListener("change", (e) => { addFiles([...e.target.files]); e.target.value = ""; });
 
+  // copy buttons on code blocks (event delegation)
+  $("#messages").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".copy");
+    if (!btn) return;
+    try {
+      await navigator.clipboard.writeText(btn.closest(".code").querySelector("pre").innerText);
+      btn.innerHTML = `${icon("check")}<span>დაკოპირდა</span>`;
+      setTimeout(() => { btn.innerHTML = COPY_LABEL; }, 1500);
+    } catch {
+      toast("კოპირება ვერ მოხერხდა");
+    }
+  });
+
+  // navigation & dashboard
   document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", loadOverview);
-  $("#push-toggle").addEventListener("click", () => togglePush().catch((e) => alert(e.message)));
-  $("#push-test").addEventListener("click", () => apiJson("/api/push/test", { method: "POST", json: {} }).catch((e) => alert(e.message)));
+  document.querySelectorAll("#dev-filter button").forEach((b) => b.addEventListener("click", () => {
+    state.devFilter = b.dataset.filter;
+    document.querySelectorAll("#dev-filter button").forEach((x) => x.classList.toggle("on", x === b));
+    renderDevices();
+  }));
+  $("#dev-search").addEventListener("input", (e) => { state.devSearch = e.target.value; renderDevices(); });
+
+  // settings
+  $("#push-toggle").addEventListener("change", (e) => setPush(e.target.checked).catch((err) => { toast(err.message); refreshPushUI(); }));
+  $("#push-test").addEventListener("click", () => apiJson("/api/push/test", { method: "POST", json: {} })
+    .then((r) => toast(r.sent ? "გაიგზავნა — შეამოწმე შეტყობინებები" : "ვერ გაიგზავნა"))
+    .catch((e) => toast(e.message)));
+  document.querySelectorAll("#theme button").forEach((b) => b.addEventListener("click", () => {
+    try { localStorage.setItem(THEME_KEY, b.dataset.theme); } catch { /* ignore */ }
+    applyTheme(b.dataset.theme);
+  }));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", loadTheme);
   $("#help").addEventListener("click", () => send("/help"));
   $("#clear-chat").addEventListener("click", async () => {
     if (!confirm("გავასუფთავო საუბარი?")) return;
@@ -616,6 +780,7 @@ async function init() {
     state.messages = [];
     save();
     renderAll();
+    toast("საუბარი გასუფთავდა");
     switchView("chat");
   });
   $("#logout").addEventListener("click", async () => {
@@ -628,22 +793,21 @@ async function init() {
     showLogin(await apiJson("/api/me").catch(() => ({})));
   });
 
+  // install prompt (Android Chrome)
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     state.installPrompt = e;
-    $("#install-card").hidden = false;
+    $("#install").hidden = false;
   });
   $("#install").addEventListener("click", async () => {
     if (!state.installPrompt) return;
     state.installPrompt.prompt();
     await state.installPrompt.userChoice;
     state.installPrompt = null;
-    $("#install-card").hidden = true;
+    $("#install").hidden = true;
   });
 
-  navigator.serviceWorker?.addEventListener("message", (e) => {
-    if (e.data?.type === "alert") loadOverview();
-  });
+  navigator.serviceWorker?.addEventListener("message", (e) => { if (e.data?.type === "alert") loadOverview(); });
   setInterval(() => { if (!document.hidden && !$("#app").hidden) loadOverview(); }, 60_000);
 
   const me = await apiJson("/api/me").catch(() => ({}));

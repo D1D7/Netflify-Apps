@@ -113,7 +113,14 @@ NetAgent-ს აქვს საკუთარი აპი ტელეფო�
 - ⚙️ **პარამეტრები:** შეტყობინებები, AI ხარჯი, საუბრის გასუფთავება, გასვლა.
 - ჩატში ყველა სწრაფი ბრძანება მუშაობს: `/status`, `/cmd R1 show clock`, `/graph R1`, `/mute R1 2h`...
 
-![NetAgent აპი: ჩატი, გრაფიკი, ქსელის dashboard, პარამეტრები](docs/app-screenshots.png)
+![NetAgent აპი: ჩატი, პასუხი ცხრილით, CLI output, ქსელის dashboard, პარამეტრები](docs/app-screenshots.png)
+
+<details><summary>მუქი თემა</summary>
+
+![NetAgent აპი მუქ თემაში](docs/app-screenshots-dark.png)
+</details>
+
+**დიზაინი:** Android-ის სტილის ინტერფეისი SVG ხატულებით. ღია, მუქი და ავტომატური თემა (⚙️ → თემა). Dashboard-ზე ჩანს ყველა მოწყობილობის latency-ის მინი-გრაფიკი (sparkline), ხოლო CLI output ტერმინალის სტილის ბლოკშია, „კოპირება“ ღილაკით.
 
 აპი Google Play-ს გარეშე, მხოლოდ შენთვის ინსტალირდება. Android-ზე Chrome მას ნამდვილ აპად აყენებს (WebAPK): ხატულით, სრულ ეკრანზე და შეტყობინებებით.
 
