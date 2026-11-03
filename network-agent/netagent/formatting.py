@@ -53,3 +53,8 @@ def markdown_to_telegram_html(text: str) -> str:
         pos = m.end()
     out.append(_inline(text[pos:]))
     return "".join(out).strip()
+
+
+def first_line(text: str) -> str:
+    """First non-empty line (Netmiko errors span many lines of advice)."""
+    return next((ln.strip() for ln in str(text).splitlines() if ln.strip()), "")

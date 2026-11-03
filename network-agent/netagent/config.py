@@ -42,6 +42,17 @@ class Settings:
     )
     device_timeout: int = field(default_factory=lambda: int(os.getenv("NETAGENT_DEVICE_TIMEOUT", "20")))
     max_parallel_devices: int = field(default_factory=lambda: int(os.getenv("NETAGENT_MAX_PARALLEL", "10")))
+    backup_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("NETAGENT_BACKUP_DIR", str(PROJECT_ROOT / "backups")))
+    )
+    export_dir: Path = field(
+        default_factory=lambda: Path(os.getenv("NETAGENT_EXPORT_DIR", str(PROJECT_ROOT / "exports")))
+    )
+    # Reachability monitoring interval in minutes (0 = off)
+    monitor_interval: int = field(default_factory=lambda: int(os.getenv("NETAGENT_MONITOR_INTERVAL", "5")))
+    # Daily report + backup time "HH:MM" (empty = off)
+    daily_report_time: str = field(default_factory=lambda: os.getenv("NETAGENT_DAILY_REPORT", "09:00").strip())
+    timezone: str = field(default_factory=lambda: os.getenv("NETAGENT_TZ", "Asia/Tbilisi"))
 
 
 settings = Settings()

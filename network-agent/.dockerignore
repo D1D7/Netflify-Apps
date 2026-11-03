@@ -1,0 +1,8 @@
+.env
+.venv
+backups
+exports
+logs
+tests
+__pycache__
+*.pyc

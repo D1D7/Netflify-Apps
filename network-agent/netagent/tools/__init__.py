@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from ..audit import log_event
@@ -22,6 +23,7 @@ MAX_RESULT_CHARS = 20000
 class ToolContext:
     inventory: Inventory
     user: str  # who asked: "telegram:<id>" or "cli:<username>"
+    files: list[Path] = field(default_factory=list)  # files produced this turn (sent to the user)
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -133,9 +135,64 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             ["network"],
         ),
     },
+    {
+        "name": "check_reachability",
+        "description": "სწრაფად ამოწმებს, ხელმისაწვდომია თუ არა მოწყობილობები (TCP კავშირი მართვის პორტზე, "
+        "ჩვეულებრივ SSH 22). აბრუნებს up/down-ს და latency-ს. გამოიყენე 'რომელი მოწყობილობაა გათიშული?' "
+        "ტიპის კითხვებზე ან სანამ ბევრ მოწყობილობას დაუკავშირდები.",
+        "input_schema": _obj({"filter": _FILTER}, []),
+    },
+    {
+        "name": "backup_configs",
+        "description": "იღებს running-config-ის backup-ს (ერთ, რამდენიმე ან ყველა მოწყობილობაზე). ახალი ფაილი "
+        "ინახება მხოლოდ მაშინ, როცა config შეიცვალა. აბრუნებს, სად იყო ცვლილება (+/- ხაზები).",
+        "input_schema": _obj({"filter": _FILTER}, []),
+    },
+    {
+        "name": "config_changes",
+        "description": "აჩვენებს, რა შეიცვალა მოწყობილობის კონფიგურაციაში: diff ბოლო backup-სა და `hours` "
+        "საათის წინანდელ backup-ს შორის (default 24). ასევე აბრუნებს backup-ების ისტორიას. ახალი "
+        "მდგომარეობისთვის ჯერ გამოიძახე backup_configs.",
+        "input_schema": _obj(
+            {"device": _DEVICE, "hours": {"type": "integer", "minimum": 1, "maximum": 8760}}, ["device"]
+        ),
+    },
+    {
+        "name": "export_excel",
+        "description": "ქმნის Excel (.xlsx) ფაილს მოწოდებული ცხრილებიდან და მომხმარებელს უგზავნის. გამოიყენე, "
+        "როცა მომხმარებელი ითხოვს ექსპორტს/Excel-ს/ფაილს, ან როცა ცხრილი ჩატისთვის ძალიან დიდია. "
+        "მონაცემები ჯერ tool-ებით შეაგროვე და ზუსტად ის ჩაწერე, რაც მიიღე.",
+        "input_schema": _obj(
+            {
+                "filename": {"type": "string", "description": "ფაილის სახელი გაფართოების გარეშე, მაგ. ip_addresses"},
+                "sheets": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "columns": {"type": "array", "items": {"type": "string"}},
+                            "rows": {"type": "array", "items": {"type": "array"}},
+                        },
+                        "required": ["name", "columns", "rows"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            ["filename", "sheets"],
+        ),
+    },
 ]
 
-DEVICE_TOOLS = {"get_device_data", "get_data_from_many", "run_show_command", "find_on_network", "device_config_summary"}
+DEVICE_TOOLS = {
+    "get_device_data",
+    "get_data_from_many",
+    "run_show_command",
+    "find_on_network",
+    "device_config_summary",
+    "backup_configs",
+}
 
 
 def _intent_commands(device, intent: str) -> list[str]:
@@ -192,6 +249,56 @@ def _subnet(ctx: ToolContext, network: str, split_prefix: int | None = None, add
     return out
 
 
+def _check_reachability(ctx: ToolContext, filter: str = "") -> Any:
+    from ..health import check_many
+
+    devices = ctx.inventory.filter(filter)
+    if not devices:
+        return {"error": "მოწყობილობები ვერ მოიძებნა"}
+    results = check_many(devices)
+    return {
+        "up": sum(r.up for r in results),
+        "down": sum(not r.up for r in results),
+        "devices": [r.as_dict() for r in results],
+    }
+
+
+def _backup_configs(ctx: ToolContext, filter: str = "") -> Any:
+    from ..backup import BackupStore, backup_devices
+
+    devices = ctx.inventory.filter(filter)
+    if not devices:
+        return {"error": "მოწყობილობები ვერ მოიძებნა"}
+    return backup_devices(ctx.inventory, devices, BackupStore(settings.backup_dir))
+
+
+MAX_DIFF_CHARS = 8000
+
+
+def _config_changes(ctx: ToolContext, device: str, hours: int = 24) -> Any:
+    from ..backup import BackupStore, changes_since
+
+    d = ctx.inventory.get(device)
+    store = BackupStore(settings.backup_dir)
+    result = changes_since(store, d.name, hours)
+    if result is None:
+        return {"device": d.name, "error": "backup ჯერ არ არსებობს — ჯერ გამოიძახე backup_configs"}
+    diff = result.get("diff", "")
+    if len(diff) > MAX_DIFF_CHARS:
+        result["diff"] = diff[:MAX_DIFF_CHARS] + "\n... [diff შემოკლდა]"
+    result["history"] = [s.taken_at.isoformat(timespec="minutes") for s in store.snapshots(d.name)][-20:]
+    return result
+
+
+def _export_excel(ctx: ToolContext, filename: str, sheets: list) -> Any:
+    from ..export import write_xlsx
+
+    path = write_xlsx(settings.export_dir, filename, sheets)
+    ctx.files.append(path)
+    rows = sum(len(s.get("rows", [])) for s in sheets)
+    return {"file": path.name, "sheets": len(sheets), "rows": rows, "status": "ფაილი შეიქმნა და მომხმარებელს გაეგზავნება"}
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "list_devices": lambda ctx, filter="": [d.public_info() for d in ctx.inventory.filter(filter)],
     "get_device_data": _get_device_data,
@@ -204,6 +311,10 @@ _HANDLERS: dict[str, Callable[..., Any]] = {
     "dns_lookup": lambda ctx, **kw: net.dns_lookup(**kw),
     "tcp_port_check": lambda ctx, **kw: net.tcp_port_check(**kw),
     "subnet_calculator": _subnet,
+    "check_reachability": _check_reachability,
+    "backup_configs": _backup_configs,
+    "config_changes": _config_changes,
+    "export_excel": _export_excel,
 }
 
 _SCHEMA_BY_NAME = {t["name"]: t for t in TOOL_SCHEMAS}
@@ -226,6 +337,8 @@ def _validate_input(name: str, args: Any) -> dict:
             raise ValueError(f"'{key}' უნდა იყოს string")
         if expected == "integer" and (isinstance(value, bool) or not isinstance(value, int)):
             raise ValueError(f"'{key}' უნდა იყოს integer")
+        if expected == "array" and not isinstance(value, list):
+            raise ValueError(f"'{key}' უნდა იყოს სია (array)")
         if "enum" in props[key] and value not in props[key]["enum"]:
             raise ValueError(f"'{key}' უნდა იყოს ერთ-ერთი: {', '.join(props[key]['enum'])}")
     return args

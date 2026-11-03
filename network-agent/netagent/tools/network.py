@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import ipaddress
+import platform
 import re
 import shutil
 import socket
 import subprocess
 import time
 from typing import Any
+
+IS_WINDOWS = platform.system() == "Windows"
 
 _HOST_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9\-\.]*[A-Za-z0-9])?$")
 
@@ -27,7 +30,9 @@ def _valid_host(host: str) -> str:
 
 def _run(cmd: list[str], timeout: int) -> dict[str, Any]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
+        )
     except FileNotFoundError:
         return {"error": f"'{cmd[0]}' ამ სერვერზე დაყენებული არ არის"}
     except subprocess.TimeoutExpired:
@@ -35,27 +40,48 @@ def _run(cmd: list[str], timeout: int) -> dict[str, Any]:
     return {"exit_code": proc.returncode, "output": (proc.stdout + proc.stderr).strip()[-6000:]}
 
 
+def _ping_command(host: str, count: int) -> list[str]:
+    if IS_WINDOWS:
+        return ["ping", "-n", str(count), "-w", "2000", host]
+    binary = "ping6" if ":" in host and shutil.which("ping6") else "ping"
+    return [binary, "-c", str(count), "-W", "2", host]
+
+
+def parse_ping_output(output: str) -> dict[str, Any]:
+    """Extract loss and average RTT from Linux/macOS or Windows ping output."""
+    out: dict[str, Any] = {}
+    m = re.search(r"(\d+(?:\.\d+)?)% (?:packet )?loss", output)
+    if m:
+        out["packet_loss_percent"] = float(m.group(1))
+    m = re.search(r"= [\d.]+/([\d.]+)/", output)  # Linux/macOS: min/avg/max
+    if m:
+        out["avg_rtt_ms"] = float(m.group(1))
+    else:
+        m = re.search(r"Average = (\d+)ms", output)  # Windows
+        if m:
+            out["avg_rtt_ms"] = float(m.group(1))
+    return out
+
+
 def ping(host: str, count: int = 4) -> dict[str, Any]:
     host = _valid_host(host)
     count = max(1, min(int(count), 10))
-    binary = "ping6" if ":" in host and shutil.which("ping6") else "ping"
-    res = _run([binary, "-c", str(count), "-W", "2", host], timeout=count * 3 + 5)
+    res = _run(_ping_command(host, count), timeout=count * 3 + 5)
     res["host"] = host
     if "output" in res:
-        m = re.search(r"(\d+)% packet loss", res["output"])
-        if m:
-            res["packet_loss_percent"] = int(m.group(1))
-        m = re.search(r"= [\d.]+/([\d.]+)/", res["output"])
-        if m:
-            res["avg_rtt_ms"] = float(m.group(1))
-        res["reachable"] = res.get("exit_code") == 0
+        res.update(parse_ping_output(res["output"]))
+        loss = res.get("packet_loss_percent")
+        # Windows ping can exit 0 on "Destination host unreachable"; trust loss when present.
+        res["reachable"] = (loss < 100) if loss is not None else res.get("exit_code") == 0
     return res
 
 
 def traceroute(host: str, max_hops: int = 20) -> dict[str, Any]:
     host = _valid_host(host)
     max_hops = max(1, min(int(max_hops), 30))
-    if shutil.which("traceroute"):
+    if IS_WINDOWS:
+        cmd = ["tracert", "-d", "-w", "2000", "-h", str(max_hops), host]
+    elif shutil.which("traceroute"):
         cmd = ["traceroute", "-n", "-w", "2", "-q", "1", "-m", str(max_hops), host]
     elif shutil.which("tracepath"):
         cmd = ["tracepath", "-n", "-m", str(max_hops), host]

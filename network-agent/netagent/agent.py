@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 import anthropic
@@ -35,6 +37,8 @@ the predefined data types do not cover, in the device's own CLI syntax.
 - Present results compactly: tables for lists of interfaces/IPs/neighbors, then short notes \
 on anything abnormal (interfaces down, errors, duplicate IPs, missing routes).
 - Mention which device and command the data came from when it is not obvious.
+- "What changed?" questions: call backup_configs for the device(s) to capture the current state, then config_changes, and explain the diff in plain words (what was added/removed and its impact).
+- Exports: when the user asks for Excel/a file/an export, or a table is too large for chat, collect the data with tools and call export_excel. The file is delivered automatically; in your answer give only a short summary, not the full table again.
 - Everything is read-only. Configuration changes are not possible in this version: if the user \
 asks for a change, write the exact commands they could apply themselves, explain the impact and \
 a rollback, and state clearly that you did not apply anything.
@@ -58,6 +62,15 @@ Output format (terminal): Markdown is rendered. Use Markdown tables for structur
 
 
 ProgressCallback = Callable[[str, dict[str, Any]], None]
+
+
+@dataclass
+class Reply:
+    text: str
+    files: list[Path] = field(default_factory=list)  # e.g. Excel exports to send to the user
+
+    def __str__(self) -> str:
+        return self.text
 
 
 class _Session:
@@ -105,7 +118,7 @@ class NetAgent:
         user: str,
         channel: str = "cli",
         on_tool: ProgressCallback | None = None,
-    ) -> str:
+    ) -> Reply:
         session = self._session(session_id)
         with session.lock:
             notice = ""
@@ -116,8 +129,9 @@ class NetAgent:
             try:
                 ctx = ToolContext(inventory=self.inventory(), user=user)
             except Exception as exc:  # noqa: BLE001
-                return f"⚠️ inventory ვერ ჩაიტვირთა: {exc}"
-            return notice + self._run_turn(session, user_content, ctx, channel, on_tool)
+                return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
+            text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)
+            return Reply(text, [f for f in ctx.files if f.exists()])
 
     def _run_turn(
         self,

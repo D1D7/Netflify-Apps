@@ -251,7 +251,7 @@ def test_agent_tool_loop(tmp_path, monkeypatch):
     a = agent_mod.NetAgent(client=client)
     answer = a.chat("s1", "რამდენი ჰოსტია?", user="test", on_tool=lambda n, i: seen.append(n))
 
-    assert answer == "254 ჰოსტი"
+    assert answer.text == "254 ჰოსტი" and answer.files == []
     assert seen == ["subnet_calculator", "list_devices"]
     second = fake.calls[1]["messages"]
     results = second[2]["content"]  # [user, assistant(tool_use), user(tool_results), ...]
@@ -270,5 +270,5 @@ def test_agent_refusal_rolls_back(tmp_path, monkeypatch):
     fake = FakeMessages([SimpleNamespace(stop_reason="refusal", usage=_usage(), content=[])])
     a = agent_mod.NetAgent(client=SimpleNamespace(beta=SimpleNamespace(messages=fake)))
     out = a.chat("s1", "x", user="t")
-    assert "ვერ გავეცი" in out
+    assert "ვერ გავეცი" in out.text
     assert a._session("s1").messages == []

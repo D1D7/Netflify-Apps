@@ -17,6 +17,18 @@ Telegram-ში ან ტერმინალში ჩვეულებრ�
 | 📄 config/log ფაილის ატვირთვა | IP, ქსელები, VLAN, MAC, ინტერფეისები და პრობლემები |
 | `10.0.0.0/22 დაყავი /26-ებად` | subnet კალკულატორი |
 | `example.com-ის MX ჩანაწერები` / `ღიაა 443 10.0.0.5-ზე?` | DNS, TCP port check, ping, traceroute |
+| `რა შეიცვალა SW-Core-1-ის კონფიგში?` | იღებს backup-ს, ადარებს წინა ვერსიას და diff-ს ადამიანურ ენაზე ხსნის |
+| `ყველა IP Excel-ში გამომიგზავნე` | ქმნის `.xlsx` ფაილს და აგზავნის Telegram-ში |
+| `რომელი მოწყობილობაა გათიშული?` | ყველა მოწყობილობის ხელმისაწვდომობის შემოწმება |
+
+### 📱 ტელეფონიდან სამუშაოდ
+- **მენიუ ღილაკებით** (`/menu`): სტატუსი, მოწყობილობები, რეპორტი, backup, ყველა IP Excel-ში, OS ვერსიები, გათიშული პორტები, neighbors. ბრძანებების აკრეფა არ გჭირდება.
+- **ბრძანებების სია:** შეტყობინების ველში `/`-ზე დაჭერისას ყველა ბრძანება ჩანს.
+- **🚨 ალერტები:** ყოველ 5 წუთში მოწყობილობები მოწმდება და გათიშვის ან აღდგენის შემთხვევაში მაშინვე მიიღებ შეტყობინებას (გათიშვის ხანგრძლივობითაც).
+- **📊 დილის რეპორტი:** ყოველდღე 09:00-ზე მოდის ჩართული/გათიშული მოწყობილობების სია და ბოლო 24 საათის config ცვლილებები. Backup ამავდროულად ავტომატურად კეთდება.
+- **📎 ფაილები:** Excel ექსპორტი პირდაპირ ჩატში მოდის. config/log ფაილის ატვირთვის შემთხვევაში ბოტი მის ანალიზს გიბრუნებს.
+
+`/status`, `/backup`, `/report` და `/devices` AI-ს არ იყენებენ, ამიტომ სწრაფია და API-ს ხარჯი არ აქვს.
 
 **მწარმოებლები:** Netmiko-ს მიერ მხარდაჭერილი ნებისმიერი მოწყობილობა (80+ პლატფორმა). მზა ბრძანებების რუკა უკვე აქვს ამ პლატფორმებს: Cisco IOS/XE/NX-OS/XR/ASA, Arista, Juniper, MikroTik, Huawei, HP Comware/ProCurve, Aruba CX, Fortinet, Palo Alto, Dell OS10, Extreme, VyOS/EdgeRouter, Linux. დანარჩენ მოწყობილობებზე აგენტი `run_show_command`-ს იყენებს და ბრძანებას მოწყობილობის საკუთარი სინტაქსით წერს.
 
@@ -83,9 +95,27 @@ python -m netagent extract running.cfg --json
 
 # inventory-ს სია
 python -m netagent devices
+
+# რომელი მოწყობილობაა ჩართული/გათიშული
+python -m netagent status
+
+# config-ების backup (ყველა, ან ფილტრით, მაგ. HQ)
+python -m netagent backup
+python -m netagent backup HQ
+
+# რა შეიცვალა R1-ზე ბოლო 24 საათში
+python -m netagent diff R1 --hours 24
+
+# რეპორტი
+python -m netagent report
 ```
 
-Telegram-ის ბრძანებები: `/devices`, `/reset` (საუბრის თავიდან დაწყება), `/id`, `/help`.
+Telegram-ის ბრძანებები: `/menu`, `/status`, `/report`, `/backup`, `/devices`, `/reset` (საუბრის თავიდან დაწყება), `/id`, `/help`.
+
+### Backup-ები
+Config-ები ინახება `backups/<მოწყობილობა>/<თარიღი>.cfg` ფაილებში. ახალი ფაილი იქმნება **მხოლოდ მაშინ, როცა config შეიცვალა**, ამიტომ ფაილების სია ცვლილებების ისტორიაცაა. დროის ხაზები და მსგავსი ცვალებადი სტრიქონები (`! Last configuration change...`) შედარებისას იგნორირდება.
+
+> ⚠️ Backup-ებში პაროლები დაფარულია (`<masked>`), რადგან მათ AI კითხულობს. ამიტომ ეს backup-ები ცვლილებების თვალყურის დევნებისთვისაა და არა მოწყობილობის სრული აღდგენისთვის.
 
 ## 🔒 უსაფრთხოება
 
@@ -124,6 +154,10 @@ network-agent/
 │   ├── security.py       # read-only guard, secret masking
 │   ├── inventory.py      # მოწყობილობები და credentials
 │   ├── formatting.py     # Markdown → Telegram HTML
+│   ├── health.py         # ხელმისაწვდომობა + მონიტორინგი
+│   ├── backup.py         # config backup და diff
+│   ├── report.py         # დღიური რეპორტი
+│   ├── export.py         # Excel ექსპორტი
 │   ├── audit.py
 │   ├── config.py
 │   └── tools/
@@ -135,6 +169,7 @@ network-agent/
 ├── inventory/devices.example.yaml
 ├── tests/
 ├── .env.example
+├── Dockerfile, docker-compose.yml
 └── PLAN.md               # შემდეგი ეტაპები
 ```
 
@@ -150,6 +185,11 @@ network-agent/
 | `NETAGENT_INVENTORY` | `inventory/devices.yaml` | inventory ფაილი |
 | `NETAGENT_DEVICE_TIMEOUT` | `20` | SSH timeout (წამი) |
 | `NETAGENT_MAX_PARALLEL` | `10` | რამდენ მოწყობილობას დაუკავშირდეს ერთდროულად |
+| `NETAGENT_MONITOR_INTERVAL` | `5` | მონიტორინგის ინტერვალი წუთებში (`0` = გამორთული) |
+| `NETAGENT_DAILY_REPORT` | `09:00` | დღიური რეპორტისა და backup-ის დრო (ცარიელი = გამორთული) |
+| `NETAGENT_TZ` | `Asia/Tbilisi` | დროის სარტყელი |
+| `NETAGENT_BACKUP_DIR` | `backups` | backup-ების საქაღალდე |
+| `NETAGENT_EXPORT_DIR` | `exports` | Excel ფაილების საქაღალდე |
 
 ## ტესტები
 
@@ -157,6 +197,17 @@ network-agent/
 pip install -r requirements-dev.txt
 python -m pytest -q
 ```
+
+## სერვერზე მუდმივად გაშვება: Docker (ყველაზე მარტივი)
+
+```bash
+cp .env.example .env                                     # შეავსე
+cp inventory/devices.example.yaml inventory/devices.yaml # შეავსე
+docker compose up -d --build
+docker compose logs -f        # ლოგები
+```
+
+ბოტი ავტომატურად ჩაირთვება სერვერის გადატვირთვის შემდეგაც. Backup-ები, ექსპორტები და ლოგები სერვერზე ინახება `backups/`, `exports/` და `logs/` საქაღალდეებში.
 
 ## სერვერზე მუდმივად გაშვება (systemd)
 

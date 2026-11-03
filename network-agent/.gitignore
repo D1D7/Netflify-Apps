@@ -1,6 +1,8 @@
 .env
 inventory/devices.yaml
 logs/
+backups/
+exports/
 __pycache__/
 *.pyc
 .venv/

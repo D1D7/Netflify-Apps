@@ -221,9 +221,16 @@ def _connect(inventory: Inventory, device: Device):
 
 
 def run_commands(
-    inventory: Inventory, device: Device, commands: list[str], parse: bool = True
+    inventory: Inventory,
+    device: Device,
+    commands: list[str],
+    parse: bool = True,
+    max_chars: int | None = MAX_OUTPUT_CHARS,
 ) -> list[dict[str, Any]]:
-    """Run validated read-only commands on one device. Returns one entry per command."""
+    """Run validated read-only commands on one device. Returns one entry per command.
+
+    Raw output is truncated to `max_chars` (None = no limit, used for backups).
+    """
     validated = [validate_command(c, device.device_type) for c in commands]
     results: list[dict[str, Any]] = []
     conn = _connect(inventory, device)
@@ -235,7 +242,8 @@ def run_commands(
                 results.append({"command": cmd, "error": f"{type(exc).__name__}: {exc}"})
                 continue
             if isinstance(out, str):
-                results.append({"command": cmd, "output": _truncate(mask_secrets(out))})
+                masked = mask_secrets(out)
+                results.append({"command": cmd, "output": _truncate(masked, max_chars) if max_chars else masked})
             else:
                 parsed = _mask_structured(out)
                 results.append({"command": cmd, "parsed": parsed})
