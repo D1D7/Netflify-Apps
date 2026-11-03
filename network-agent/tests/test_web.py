@@ -231,3 +231,26 @@ def test_logout_everywhere(client):
     _login(client)
     assert client.post("/api/logout", json={"everywhere": True}, headers=H).status_code == 200
     assert client.get("/api/overview").status_code == 401
+
+
+def test_doctor_offline_reports_missing_pieces(tmp_path, monkeypatch):
+    from netagent import doctor
+    from netagent.config import settings
+
+    inv = tmp_path / "devices.yaml"
+    inv.write_text("credentials:\n  default: {username_env: NA_TEST_U, password_env: NA_TEST_P}\n"
+                   "devices:\n  R1: {host: 127.0.0.1, port: 1, device_type: cisco_ios}\n", encoding="utf-8")
+    saved = {k: getattr(settings, k) for k in ("inventory_path", "data_dir")}
+    object.__setattr__(settings, "inventory_path", inv)
+    object.__setattr__(settings, "data_dir", tmp_path / "data")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    try:
+        checks = doctor.run_checks(online=False)
+    finally:
+        for k, v in saved.items():
+            object.__setattr__(settings, k, v)
+    by_title = {c.title: c.status for c in checks}
+    assert by_title["ANTHROPIC_API_KEY არ არის მითითებული"] == doctor.FAIL
+    assert any("credentials 'default': ცარიელია" in t for t in by_title)
+    assert any(t.startswith("SSH-ზე მიუწვდომელი") for t in by_title)
+    assert by_title["ყველა ბიბლიოთეკა დაყენებულია"] == doctor.OK

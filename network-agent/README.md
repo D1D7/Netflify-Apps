@@ -189,6 +189,20 @@ python -m netagent serve
 
 საჭიროა Python 3.10 ან უფრო ახალი.
 
+### 🪟 Windows (უმარტივესი გზა)
+1. დააყენე **Python 3.12** [python.org/downloads](https://www.python.org/downloads/)-დან. ინსტალაციისას აუცილებლად მონიშნე **„Add python.exe to PATH“**.
+2. გადმოწერე კოდი და გახსენი `network-agent` საქაღალდე.
+3. ორჯერ დააჭირე **`install.bat`**-ს. ის ყველაფერს დააყენებს და `.env`-საც შექმნის.
+4. `notepad .env`: ჩაწერე `ANTHROPIC_API_KEY` და მოწყობილობების username/პაროლი.
+5. `notepad inventory\devices.yaml`: ჩაწერე შენი მოწყობილობები, ან მოგვიანებით ჩატში გამოიყენე `/discover`.
+6. **`setup-password.bat`**: აპის პაროლი და 2FA.
+7. **`doctor.bat`**: ამოწმებს ყველაფერს და გეუბნება, რა აკლია.
+8. **`start.bat`**: უშვებს NetAgent-ს. კომპიუტერზე გახსენი http://127.0.0.1:8080
+
+> ⚠️ სანამ NetAgent მუშაობს, კომპიუტერი არ უნდა დაიძინოს: Settings → System → Power → Sleep → **Never** (როცა დენზეა შეერთებული).
+
+### Linux / Mac
+
 ```bash
 cd network-agent
 python3 -m venv .venv && source .venv/bin/activate

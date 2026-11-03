@@ -14,6 +14,7 @@
   python -m netagent.cli usage                # AI cost
   python -m netagent.cli web-setup --totp     # app password + 2FA
   python -m netagent.cli serve                # app server (+ monitoring + Telegram)
+  python -m netagent.cli doctor               # check the setup, explain what is missing
   python -m netagent.cli discover 10.0.0.0/24 --add   # find devices, add to inventory
   python -m netagent.cli health R1            # interfaces / BGP / OSPF / CPU
   python -m netagent.cli graph R1             # latency chart PNG (needs the bot's monitoring data)
@@ -466,6 +467,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from .doctor import print_report, run_checks
+
+    with console.status("ვამოწმებ..."):
+        checks = run_checks(online=not args.offline)
+    return print_report(checks, console)
+
+
 def cmd_usage(args: argparse.Namespace) -> int:
     console.print(Markdown(_usage_tracker().summary().replace("\n", "  \n")))
     return 0
@@ -551,6 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--totp-only", action="store_true", help="მხოლოდ 2FA-ს ჩართვა/ახალი გასაღები")
     p_ws.add_argument("--disable-totp", action="store_true")
     sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
+    p_doc = sub.add_parser("doctor", help="ყველაფრის შემოწმება: რა აკლია და როგორ გავასწორო")
+    p_doc.add_argument("--offline", action="store_true", help="API key-ს/Telegram-ის ონლაინ შემოწმების გარეშე")
     p_disc = sub.add_parser("discover", help="ქსელში მოწყობილობების ძებნა (SSH) და ამოცნობა")
     p_disc.add_argument("network")
     p_disc.add_argument("--add", action="store_true", help="ნაპოვნის დამატება inventory-ში")
@@ -590,6 +601,7 @@ def main(argv: list[str] | None = None) -> int:
         "usage": cmd_usage,
         "web-setup": cmd_web_setup,
         "serve": cmd_serve,
+        "doctor": cmd_doctor,
         "discover": cmd_discover,
         "health": cmd_health,
         "graph": cmd_graph,
