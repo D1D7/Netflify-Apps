@@ -61,6 +61,7 @@ async def amain() -> None:
         log.info("Telegram bot started")
 
     tasks = start_scheduler(monitoring)
+    services.vendors.ensure()  # download the MAC vendor list once, in the background
 
     syslog_transport = None
     if settings.syslog_port > 0:

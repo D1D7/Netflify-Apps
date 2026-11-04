@@ -187,6 +187,12 @@ def run_checks(online: bool = True) -> list[Check]:
     except OSError as exc:
         add(Check(FAIL, f"data საქაღალდეში ჩაწერა ვერ ხერხდება: {exc}"))
 
+    oui = settings.data_dir / "oui.txt"
+    if oui.exists():
+        add(Check(OK, "MAC მწარმოებლების ბაზა ჩამოტვირთულია"))
+    else:
+        add(Check(WARN, "MAC მწარმოებლების ბაზა ჯერ არ არის", "ჩამოიტვირთება serve-ის პირველ გაშვებაზე, ან ჩატში: /mac update"))
+
     # -- Tailscale (phone access) ------------------------------------------------------------
     ts = _tailscale_path()
     if not ts:

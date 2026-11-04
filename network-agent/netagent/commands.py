@@ -9,7 +9,7 @@ from __future__ import annotations
 import secrets
 import shlex
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -378,6 +378,59 @@ def logs(s, args, user) -> Result:
     return Result("\n".join(lines))
 
 
+def runbook_cmd(s, args, user) -> Result:
+    from .runbooks import RUNBOOKS, run
+
+    if not args:
+        return Result("📚 **Runbook-ები:**\n" + "\n".join(f"• /runbook {k} — {v}" for k, v in RUNBOOKS.items()),
+                      buttons=[Button("🌐 ინტერნეტი", "/runbook internet"), Button("🐢 ნელია", "/runbook slow")])
+    try:
+        rb = run(s, args[0].lower(), args[1:])
+    except (ValueError, InventoryError) as exc:
+        raise CommandError(str(exc)) from None
+    return Result(rb.format())
+
+
+def mac_cmd(s, args, user) -> Result:
+    if not args:
+        raise CommandError("გამოყენება: /mac a4:5e:60:12:ab:cd   ·   ბაზის განახლება: /mac update")
+    if args[0].lower() == "update":
+        try:
+            n, src = s.vendors.update()
+        except RuntimeError as exc:
+            raise CommandError(str(exc)) from None
+        return Result(f"✅ MAC ბაზა განახლდა: {n:,} მწარმოებელი ({src})")
+    lines = []
+    for mac in args[:10]:
+        vendor = s.vendors.lookup(mac)
+        lines.append(f"`{mac}` → {vendor or 'უცნობი'}")
+    if not s.vendors.size:
+        lines.append("\n(MAC ბაზა ჯერ არ არის — /mac update)")
+    return Result("🔎 " + "\n".join(lines))
+
+
+def newdevices_cmd(s, args, user) -> Result:
+    from .newdevices import format_new
+
+    hours = int(args[0]) if args and args[0].isdigit() else 24
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    items = s.newdevices.recent(since)
+    total = len(s.newdevices.known())
+    if not total:
+        return Result("🆕 ჯერ არ შემიმოწმებია. პირველი სკანირება ქმნის საწყის სიას, შემდეგ ახალი MAC-ები ალერტად მოვა.")
+    if not items:
+        return Result(f"🆕 ბოლო {hours} სთ-ში ახალი მოწყობილობა არ გამოჩენილა (ცნობილია {total}).")
+    return Result(f"🆕 **ახალი მოწყობილობები** — ბოლო {hours} სთ ({len(items)})\n" + format_new(items))
+
+
+def demo_cmd(s, args, user) -> Result:
+    from .demo import lab
+
+    if lab.LAB is None:
+        raise CommandError("დემო რეჟიმი ჩართული არ არის (გაუშვი demo.bat ან python -m netagent demo)")
+    return lab.LAB.command(args)
+
+
 HELP = """**სწრაფი ბრძანებები (AI-ს გარეშე, უფასო):**
 /status — რომელი მოწყობილობაა ჩართული/გათიშული
 /health R1 — ინტერფეისები, BGP, OSPF, CPU
@@ -391,6 +444,9 @@ HELP = """**სწრაფი ბრძანებები (AI-ს გარ�
 /mute R1 2h · /mute all 30m · /unmute R1
 /note R1 ტექსტი · /notes R1 · /delnote R1 2
 /usage — AI ხარჯი
+/runbook internet — „ინტერნეტი არ მუშაობს“ შემოწმება (/runbook slow, /runbook device R1)
+/newdevices — ქსელში ახლად გამოჩენილი მოწყობილობები
+/mac a4:5e:60:12:ab:cd — MAC-ის მწარმოებელი
 /map — ქსელის რუკა (CDP/LLDP)
 /logs R1 — ბოლო ლოგები (/logs R1 UPDOWN — ძებნით)
 /devices — მოწყობილობების სია
@@ -422,6 +478,10 @@ COMMANDS: dict[str, Callable] = {
     "discover-add": discover_add,
     "discover-cancel": discover_cancel,
     "map": map_cmd,
+    "runbook": runbook_cmd,
+    "mac": mac_cmd,
+    "newdevices": newdevices_cmd,
+    "demo": demo_cmd,
     "logs": logs,
     "help": help_cmd,
 }

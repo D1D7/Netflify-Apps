@@ -88,6 +88,9 @@ TOOL_LABELS = {
     "discover_devices": "🔍 სკანირება: {network}",
     "network_topology": "🗺 ქსელის რუკა",
     "syslog_search": "📜 ლოგები",
+    "run_runbook": "📚 runbook: {name}",
+    "mac_vendor": "🔎 MAC: {mac}",
+    "new_devices": "🆕 ახალი მოწყობილობები",
 }
 
 

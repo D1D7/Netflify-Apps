@@ -92,7 +92,6 @@ def _content_with_stdin(question: str) -> str | list[dict[str, Any]]:
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
-    from .agent import NetAgent
 
     agent = _make_agent()
     content = _content_with_stdin(" ".join(args.question))
@@ -122,7 +121,6 @@ def _print_reply(reply) -> None:
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
-    from .agent import NetAgent
 
     agent = _make_agent()
     console.print(
@@ -467,6 +465,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    # separate process: the demo must set its own settings before netagent.config is imported
+    import subprocess
+
+    try:
+        return subprocess.call([sys.executable, "-m", "netagent.demo"])
+    except KeyboardInterrupt:
+        return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     from .doctor import print_report, run_checks
 
@@ -561,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--disable-totp", action="store_true")
     p_serve = sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
     p_serve.add_argument("--log-file", help="ლოგების ჩაწერა ფაილში (ავტომატური გაშვებისთვის)")
+    sub.add_parser("demo", help="სადემონსტრაციო ვირტუალური ქსელი (რეალური მოწყობილობების გარეშე)")
     p_doc = sub.add_parser("doctor", help="ყველაფრის შემოწმება: რა აკლია და როგორ გავასწორო")
     p_doc.add_argument("--offline", action="store_true", help="API key-ს/Telegram-ის ონლაინ შემოწმების გარეშე")
     p_disc = sub.add_parser("discover", help="ქსელში მოწყობილობების ძებნა (SSH) და ამოცნობა")
@@ -603,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
         "web-setup": cmd_web_setup,
         "serve": cmd_serve,
         "doctor": cmd_doctor,
+        "demo": cmd_demo,
         "discover": cmd_discover,
         "health": cmd_health,
         "graph": cmd_graph,

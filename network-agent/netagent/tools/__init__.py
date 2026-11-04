@@ -27,6 +27,7 @@ class ToolContext:
     notes: Any = None  # NoteStore
     history: Any = None  # LatencyHistory
     syslog: Any = None  # SyslogStore
+    services: Any = None  # Services (runbooks, vendors, new devices)
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -255,6 +256,23 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         }, []),
     },
     {
+        "name": "run_runbook",
+        "description": "დიაგნოსტიკის სცენარი ნაბიჯ-ნაბიჯ, დასკვნით: internet (ინტერნეტი არ მუშაობს — სად წყდება), "
+        "device (ერთი მოწყობილობის სრული შემოწმება; საჭიროა device), slow (ვინ არის ნელი/გადატვირთული).",
+        "input_schema": _obj({"name": {"type": "string", "enum": ["internet", "device", "slow"]}, "device": {"type": "string"}},
+                             ["name"]),
+    },
+    {
+        "name": "mac_vendor",
+        "description": "MAC მისამართის მწარმოებელი (OUI ბაზა). ასევე ამოიცნობს შემთხვევით (privacy) MAC-ებს.",
+        "input_schema": _obj({"mac": {"type": "string"}}, ["mac"]),
+    },
+    {
+        "name": "new_devices",
+        "description": "ქსელში ახლად გამოჩენილი მოწყობილობები (ახალი MAC ARP ცხრილებში) ბოლო `hours` საათში.",
+        "input_schema": _obj({"hours": {"type": "integer", "minimum": 1, "maximum": 720}}, []),
+    },
+    {
         "name": "discover_devices",
         "description": "ასკანერებს ქსელს (მაქს. /22) SSH-ზე და ცდილობს ამოიცნოს მოწყობილობის ტიპი და hostname "
         "credentials პროფილით. inventory-ში არაფერს წერს — დასამატებლად მომხმარებელს შესთავაზე /discover "
@@ -278,6 +296,7 @@ DEVICE_TOOLS = {
     "device_health",
     "discover_devices",
     "network_topology",
+    "run_runbook",
 }
 
 
@@ -314,7 +333,10 @@ def _find_on_network(ctx: ToolContext, query: str, filter: str = "") -> Any:
     devices = ctx.inventory.filter(filter)
     if not devices:
         return {"error": "მოწყობილობები ვერ მოიძებნა"}
-    return dev.search_devices(ctx.inventory, devices, query)
+    result = dev.search_devices(ctx.inventory, devices, query)
+    if result.get("type") == "mac" and ctx.services is not None:
+        result["vendor"] = ctx.services.vendors.lookup(query) or "უცნობი"
+    return result
 
 
 def _device_config_summary(ctx: ToolContext, device: str) -> Any:
@@ -506,6 +528,37 @@ def _syslog_search(ctx: ToolContext, device: str = "", text: str = "", hours: in
             "note": "ცარიელია? მოწყობილობებზე syslog უნდა იყოს მიმართული NetAgent-ის კომპიუტერზე (udp/514)" if not rows else ""}
 
 
+def _need_services(ctx: ToolContext):
+    if ctx.services is None:
+        raise ValueError("ეს ფუნქცია მიუწვდომელია ამ რეჟიმში")
+    return ctx.services
+
+
+def _run_runbook(ctx: ToolContext, name: str, device: str = "") -> Any:
+    from ..runbooks import run
+
+    rb = run(_need_services(ctx), name, [device] if device else [])
+    return {"title": rb.title, "steps": [f"{s.mark} {s.text}" for s in rb.steps], "verdict": rb.verdict}
+
+
+def _mac_vendor(ctx: ToolContext, mac: str) -> Any:
+    s = _need_services(ctx)
+    vendor = s.vendors.lookup(mac)
+    out = {"mac": mac, "vendor": vendor or "უცნობი"}
+    if not s.vendors.size:
+        out["note"] = "MAC ბაზა ჯერ არ არის ჩამოტვირთული (ჩატში: /mac update)"
+    return out
+
+
+def _new_devices(ctx: ToolContext, hours: int = 24) -> Any:
+    from datetime import datetime, timedelta
+
+    s = _need_services(ctx)
+    since = (datetime.now() - timedelta(hours=hours)).isoformat(timespec="seconds")
+    items = s.newdevices.recent(since)
+    return {"hours": hours, "count": len(items), "devices": items[:50], "known_total": len(s.newdevices.known())}
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "list_devices": lambda ctx, filter="": [d.public_info() for d in ctx.inventory.filter(filter)],
     "get_device_data": _get_device_data,
@@ -532,6 +585,9 @@ _HANDLERS: dict[str, Callable[..., Any]] = {
     "discover_devices": _discover_devices,
     "network_topology": _network_topology,
     "syslog_search": _syslog_search,
+    "run_runbook": _run_runbook,
+    "mac_vendor": _mac_vendor,
+    "new_devices": _new_devices,
 }
 
 _SCHEMA_BY_NAME = {t["name"]: t for t in TOOL_SCHEMAS}

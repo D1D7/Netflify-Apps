@@ -114,7 +114,7 @@ def build_report(
         + ("  (დეტალები: /audit)" if any(counts.values()) else "")
     )
     if duplicates:
-        lines.append(f"⚠️ დუბლირებული IP: " + ", ".join(d["ip"] for d in duplicates[:5]))
+        lines.append("⚠️ დუბლირებული IP: " + ", ".join(d["ip"] for d in duplicates[:5]))
 
     if mutes:
         active = mutes.active()

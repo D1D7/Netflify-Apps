@@ -64,6 +64,8 @@ class Settings:
     # App server (Tailscale: keep 127.0.0.1 and run `tailscale serve --bg 8080`)
     web_host: str = field(default_factory=lambda: os.getenv("NETAGENT_WEB_HOST", "127.0.0.1"))
     web_port: int = field(default_factory=lambda: int(os.getenv("NETAGENT_WEB_PORT", "8080")))
+    # New device (unknown MAC in ARP tables) detection interval, minutes (0 = off)
+    new_device_interval: int = field(default_factory=lambda: int(os.getenv("NETAGENT_NEW_DEVICE_INTERVAL", "15")))
     # Syslog receiver (UDP). Devices send logs to this computer; 0 = off.
     syslog_host: str = field(default_factory=lambda: os.getenv("NETAGENT_SYSLOG_HOST", "0.0.0.0"))
     syslog_port: int = field(default_factory=lambda: int(os.getenv("NETAGENT_SYSLOG_PORT", "514")))

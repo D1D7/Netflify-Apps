@@ -49,6 +49,7 @@ HELP_TEXT = """\
 /audit — უსაფრთხოების აუდიტი
 /backup — config-ების backup
 /map — ქსელის რუკა · /logs R1 — ლოგები
+/runbook internet — „ინტერნეტი არ მუშაობს“ · /newdevices · /mac
 /report — ქსელის რეპორტი
 /discover 10.0.0.0/24 — ახალი მოწყობილობების ძებნა
 /mute R1 2h — ალერტების დადუმება (/mute all 30m) · /unmute R1
@@ -63,6 +64,9 @@ BOT_COMMANDS = [
     BotCommand("health", "მოწყობილობის მდგომარეობა: /health R1"),
     BotCommand("graph", "latency გრაფიკი: /graph R1"),
     BotCommand("cmd", "show ბრძანება: /cmd R1 show ip route"),
+    BotCommand("runbook", "დიაგნოსტიკა: /runbook internet"),
+    BotCommand("newdevices", "ახალი მოწყობილობები ქსელში"),
+    BotCommand("mac", "MAC-ის მწარმოებელი: /mac aa:bb:cc:dd:ee:ff"),
     BotCommand("map", "ქსელის რუკა (CDP/LLDP)"),
     BotCommand("logs", "ლოგები: /logs R1"),
     BotCommand("audit", "უსაფრთხოების აუდიტი"),
@@ -117,6 +121,7 @@ SLOW_COMMANDS = {
     "audit": "🛡 ვამოწმებ კონფიგურაციებს...", "health": "🩺 ვამოწმებ...", "cmd": "💻 ვასრულებ...",
     "discover": "🔍 ვასკანერებ (შეიძლება 1-2 წუთი დასჭირდეს)...", "graph": "📈 ვხატავ გრაფიკს...",
     "map": "🗺 ვაგროვებ CDP/LLDP-ს და ვხატავ რუკას...",
+    "runbook": "📚 ვასრულებ შემოწმებებს...", "mac": "🔎 ვეძებ...",
 }
 
 class TelegramBot:
@@ -376,6 +381,9 @@ class TelegramBot:
             jq.run_repeating(job(m.check_reachability), interval=settings.monitor_interval * 60, first=20, name="monitor")
         if settings.deep_monitor_interval > 0:
             jq.run_repeating(job(m.check_deep), interval=settings.deep_monitor_interval * 60, first=45, name="deep_monitor")
+        if settings.new_device_interval > 0:
+            jq.run_repeating(job(m.check_new_devices), interval=settings.new_device_interval * 60, first=60,
+                             name="new_devices")
         if settings.config_watch_interval > 0:
             jq.run_repeating(job(m.check_config_changes), interval=settings.config_watch_interval * 60, first=90,
                              name="config_watch")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -139,12 +140,13 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             "up": sum(r.up for r in results),
             "total": len(results),
             "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config"}),
+            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice"}),
             "alerts": alerts[:30],
             "mutes": services.mutes.active(),
             "usage": {"today": round(today.get("cost", 0.0), 3), "requests": today.get("requests", 0),
                       "month": services.usage.month_cost(), "budget": services.usage.daily_budget_usd},
             "model": settings.model,
+            "demo": os.getenv("NETAGENT_DEMO") == "1",
         }
 
     # -- commands & chat -----------------------------------------------------------

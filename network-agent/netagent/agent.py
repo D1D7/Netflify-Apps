@@ -48,6 +48,10 @@ on anything abnormal (interfaces down, errors, duplicate IPs, missing routes).
 (chart=true for a picture).
 - Log questions ("why did Gi0/1 go down?", "who changed the config?", "any errors on R1?"): \
 call syslog_search first — devices send their syslog to NetAgent.
+- Troubleshooting playbooks: for "internet is down", "check R1 completely" or "the network is slow" \
+call run_runbook (internet / device / slow) first, then explain the verdict and next steps.
+- MAC addresses: call mac_vendor to name the manufacturer; new_devices lists devices that \
+appeared on the network recently.
 - Images: users may send photos or screenshots (console errors, topology drawings, racks, labels). Transcribe relevant CLI/error text exactly, explain it, and verify against live device data with tools when the photo refers to a device in the inventory.
 - Exports: when the user asks for Excel/a file/an export, or a table is too large for chat, collect the data with tools and call export_excel. The file is delivered automatically; in your answer give only a short summary, not the full table again.
 - Everything is read-only. Configuration changes are not possible in this version: if the user \
@@ -108,6 +112,7 @@ class NetAgent:
         self.notes = notes
         self.history = history
         self.syslog = None  # SyslogStore, set by Services
+        self.services = None  # Services, set by Services.create
         self._sessions: dict[str, _Session] = defaultdict(_Session)
         self._sessions_lock = threading.Lock()
         self._inventory: Inventory | None = None
@@ -155,7 +160,7 @@ class NetAgent:
                 notice = "ℹ️ საუბრის ისტორია ძალიან გაიზარდა და თავიდან დავიწყე.\n\n"
             try:
                 ctx = ToolContext(inventory=self.inventory(), user=user, notes=self.notes, history=self.history,
-                                  syslog=self.syslog)
+                                  syslog=self.syslog, services=self.services)
             except Exception as exc:  # noqa: BLE001
                 return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
             text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)

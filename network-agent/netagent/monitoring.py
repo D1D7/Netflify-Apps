@@ -31,7 +31,7 @@ class Alert:
     def title(self) -> str:
         return {"down": "🔴 მოწყობილობა მიუწვდომელია", "up": "🟢 აღდგა", "watch": "🚨 ალერტი",
                 "config": "📝 Config შეიცვალა", "report": "📊 დღიური რეპორტი",
-                "syslog": "📜 ლოგის ალერტი"}.get(self.kind, "NetAgent")
+                "syslog": "📜 ლოგის ალერტი", "newdevice": "🆕 ახალი მოწყობილობა ქსელში"}.get(self.kind, "NetAgent")
 
 
 Notifier = Callable[[Alert], Awaitable[None]]
@@ -122,6 +122,18 @@ class MonitoringService:
             alerts.append(alert)
         return alerts
 
+    async def check_new_devices(self) -> list[Alert]:
+        from .newdevices import collect_arp, format_new
+
+        arp = await asyncio.to_thread(collect_arp, self.s.inventory())
+        new = await asyncio.to_thread(self.s.newdevices.process, arp)
+        new = [e for e in new if not self.s.mutes.is_muted(e["seen_on"])]
+        if not new:
+            return []
+        alert = Alert("newdevice", format_new(new), sorted({e["seen_on"] for e in new}), mutable=False)
+        await self.emit(alert)
+        return [alert]
+
     async def daily_report(self) -> Alert:
         from .report import build_report
 
@@ -189,6 +201,8 @@ def start_scheduler(monitoring: MonitoringService) -> list[asyncio.Task]:
         tasks.append(asyncio.create_task(_every(settings.monitor_interval * 60, 20, monitoring.check_reachability, "monitor")))
     if settings.deep_monitor_interval > 0:
         tasks.append(asyncio.create_task(_every(settings.deep_monitor_interval * 60, 45, monitoring.check_deep, "deep")))
+    if settings.new_device_interval > 0:
+        tasks.append(asyncio.create_task(_every(settings.new_device_interval * 60, 60, monitoring.check_new_devices, "newdevices")))
     if settings.config_watch_interval > 0:
         tasks.append(asyncio.create_task(_every(settings.config_watch_interval * 60, 90, monitoring.check_config_changes, "config")))
     hhmm = parse_hhmm(settings.daily_report_time) if settings.daily_report_time else None

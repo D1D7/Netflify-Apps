@@ -5,6 +5,7 @@ const THEME_KEY = "na.theme";
 const MAX_STORED = 200;
 
 const state = {
+  demoShown: false,
   messages: [],
   attachments: [],
   busy: false,
@@ -447,16 +448,21 @@ const QUICK = [
   ["shield", "amber", "აუდიტი", "/audit"],
   ["save", "green", "Backup", "/backup"],
   ["server", "blue", "Inventory", "/devices"],
+  ["help", "amber", "Runbook", "/runbook"],
   ["network", "blue", "რუკა", "/map"],
   ["file", "gray", "ლოგები", "/logs"],
   ["note", "violet", "შენიშვნები", "/notes"],
   ["help", "gray", "ბრძანებები", "/help"],
 ];
 
-function renderQuick() {
+// Demo mode (python -m netagent demo): failure scenarios one tap away.
+const DEMO_ACTION = ["sparkle", "violet", "დემო სცენარები", "/demo"];
+
+function renderQuick(demo = false) {
+  const actions = demo ? [DEMO_ACTION, ...QUICK] : QUICK;
   const chips = $("#quick");
   chips.replaceChildren();
-  for (const [ico, , label, cmd] of QUICK) {
+  for (const [ico, , label, cmd] of actions) {
     const b = el("button", "chip", `${icon(ico)}<span></span>`);
     b.type = "button";
     b.lastElementChild.textContent = label;
@@ -465,7 +471,7 @@ function renderQuick() {
   }
   const grid = $("#dash-actions");
   grid.replaceChildren();
-  for (const [ico, color, label, cmd] of QUICK.filter((q) => q[3] !== "/help").slice(0, 6)) {
+  for (const [ico, color, label, cmd] of actions.filter((q) => q[3] !== "/help").slice(0, 6)) {
     const b = el("button", "action", `<span class="a-ico ${color}">${icon(ico)}</span><span></span>`);
     b.type = "button";
     b.lastElementChild.textContent = label;
@@ -506,7 +512,7 @@ function sparkline(values) {
 
 const EVENT_STYLE = {
   down: ["alert", "red"], up: ["check", "green"], watch: ["pulse", "amber"],
-  config: ["note", "violet"], report: ["report", "blue"], syslog: ["file", "amber"],
+  config: ["note", "violet"], report: ["report", "blue"], syslog: ["file", "amber"], newdevice: ["search", "violet"],
 };
 
 function renderDevices() {
@@ -593,6 +599,10 @@ function renderOverview() {
     al.appendChild(item);
   }
   $("#about").textContent = `NetAgent · მოდელი: ${data.model}`;
+  if (Boolean(data.demo) !== state.demoShown) {
+    state.demoShown = Boolean(data.demo);
+    renderQuick(state.demoShown);
+  }
 }
 
 async function loadOverview() {
