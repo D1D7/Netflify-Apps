@@ -189,6 +189,9 @@ class FakeDevice:
     outputs: dict = field(default_factory=dict)  # command -> text, or a function returning text (live data)
     online: bool = True
     handlers: list = field(default_factory=list)  # (command prefix, fn(rest) -> text)
+    saved: dict = field(default_factory=dict)  # files on "flash" (rollback copy, startup-config)
+    applied: list = field(default_factory=list)  # config lines received in config mode
+    reload_pending: bool = False
 
     @property
     def prompt(self) -> str:
@@ -375,6 +378,10 @@ class _Server:
             if chan is None:
                 return
             chan.send(("\r\n" + dev.prompt).encode())
+            from .lab_extra import interact
+
+            st: dict = {}
+            prompt = dev.prompt
             buf = b""
             while True:
                 data = chan.recv(1024)
@@ -384,8 +391,14 @@ class _Server:
                 while b"\n" in buf or b"\r" in buf:
                     i = min(x for x in (buf.find(b"\n"), buf.find(b"\r")) if x >= 0)
                     line, buf = buf[:i].decode(errors="replace").strip(), buf[i + 1:]
-                    out = respond(dev, line)
-                    chan.send((line + "\r\n" + (out.replace("\n", "\r\n") + "\r\n" if out else "") + dev.prompt).encode())
+                    got = interact(dev, line, st)
+                    if got is None:
+                        out, prompt = respond(dev, line), dev.prompt
+                    else:
+                        out, new_prompt = got
+                        prompt = dev.prompt if new_prompt is None else new_prompt
+                    tail = "" if out.endswith(("? ", "[confirm]")) else "\r\n"
+                    chan.send((line + "\r\n" + (out.replace("\n", "\r\n") + tail if out else "") + prompt).encode())
         except Exception:  # noqa: BLE001 - a client hanging up mid-session is normal
             pass
         finally:
@@ -427,6 +440,8 @@ class DemoLab:
     def stop(self) -> None:
         for srv in self.servers.values():
             srv.stop()
+        for agent in getattr(self, "snmp", []):
+            agent.stop()
 
     # -- syslog from a device's own address -------------------------------------
     def syslog(self, device: str, severity: int, message: str) -> None:
@@ -443,7 +458,7 @@ class DemoLab:
     # -- scenarios ------------------------------------------------------------------
     def scenario(self, name: str) -> str:
         r1, core, acc, mt = (self.devices[n] for n in ("R1", "SW-Core-1", "SW-Access-2", "MT-Branch"))
-        if name in {"errors", "congestion", "vpn", "dhcp"}:
+        if name in {"errors", "congestion", "vpn", "dhcp", "toner", "power"}:
             FAULTS[name] = True
             if name == "vpn":
                 self.syslog("R1", 3, "%LINEPROTO-5-UPDOWN: Line protocol on Interface Tunnel0, changed state to down")
@@ -503,6 +518,7 @@ class DemoLab:
                 Button("🆕 უცნობი მოწყობილობა", "/demo newdevice"), Button("🔐 brute force", "/demo bruteforce"),
                 Button("⚡ CRC შეცდომები", "/demo errors"), Button("📈 გადატვირთული ხაზი", "/demo congestion"),
                 Button("🔒 VPN დაეცა", "/demo vpn"), Button("📦 DHCP გაივსო", "/demo dhcp"),
+                Button("🖨 ტონერი", "/demo toner"), Button("🔋 დენი გაითიშა", "/demo power"),
                 Button("✅ აღდგენა", "/demo restore")])
         name = args[0].lower()
         if name not in SCENARIOS:
@@ -517,7 +533,8 @@ class DemoLab:
                 "down": "სცადე: /runbook device SW-Access-2", "newdevice": "სცადე: /newdevices",
                 "cpu": "სცადე: /runbook slow", "bruteforce": "სცადე: /logs MT-Branch", "restore": "",
                 "errors": "სცადე: /errors ან „რატომ წყდება Wi-Fi ლობიში?“", "congestion": "სცადე: /traffic R1",
-                "vpn": "სცადე: /runbook vpn ან /path 10.20.0.15 192.168.10.21", "dhcp": "სცადე: /runbook dhcp"}[name]
+                "vpn": "სცადე: /runbook vpn ან /path 10.20.0.15 192.168.10.21", "dhcp": "სცადე: /runbook dhcp",
+                "toner": "სცადე: /snmp Printer-2F", "power": "სცადე: /snmp UPS-1"}[name]
         return Result(f"🎮 **სცენარი:** {text}\n⏱ {later}" + (f"\n💡 {hint}" if hint else ""),
                       buttons=[Button("✅ აღდგენა", "/demo restore")] if name != "restore" else [])
 
@@ -541,6 +558,10 @@ def start_lab(syslog_port: int, base_port: int = 2222) -> DemoLab:
         ports = [base_port + i for i in range(4)]
     lab = DemoLab(build_devices(ips, ports), syslog_port)
     lab.start()
+    from . import lab_extra
+
+    snmp_ips = ["127.0.0.15", "127.0.0.16"] if ips[0] != "127.0.0.1" else ["127.0.0.1", "127.0.0.1"]
+    lab.snmp = lab_extra.start_snmp(snmp_ips, 1161 if ips[0] != "127.0.0.1" else 0, FAULTS)
     LAB = lab
     log.info("demo lab: %s", ", ".join(f"{d.name}@{d.ip}:{d.port}" for d in lab.devices.values()))
     return lab
@@ -581,4 +602,6 @@ devices:
     site: Branch-1
     role: router
     watch: {{cpu: 90}}
-"""
+""" + "".join(
+        f"  {name}:\n    host: {a.host}\n    port: {a.port}\n    device_type: snmp\n    site: HQ\n    role: {role}\n"
+        for a, name, role in zip(getattr(lab, "snmp", []), ("Printer-2F", "UPS-1"), ("printer", "ups")))

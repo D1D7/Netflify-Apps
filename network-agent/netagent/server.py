@@ -92,6 +92,7 @@ async def amain() -> None:
             log.warning("syslog udp/%s ვერ გაიხსნა (%s) — ლოგების მიღება გამორთულია. "
                         "შეცვალე NETAGENT_SYSLOG_PORT ან გაუშვი ადმინისტრატორად.", settings.syslog_port, exc)
 
+    feature_transports = await features.start(services, monitoring)
     app = create_app(services, monitoring, auth, push)
     config = uvicorn.Config(app, host=settings.web_host, port=settings.web_port, proxy_headers=True,
                             forwarded_allow_ips="127.0.0.1", log_level="info", access_log=False)
@@ -103,6 +104,8 @@ async def amain() -> None:
             t.cancel()
         if syslog_transport is not None:
             syslog_transport.close()
+        for t in feature_transports:
+            t.close()
         if telegram_app is not None:
             await telegram_app.updater.stop()
             await telegram_app.stop()

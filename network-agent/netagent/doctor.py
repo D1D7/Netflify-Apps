@@ -128,6 +128,12 @@ def run_checks(online: bool = True) -> list[Check]:
     if extra:
         add(Check(OK, "დამატებითი ალერტების არხები: " + ", ".join(extra) + " (შემოწმება: /notify test)"))
 
+    from .features import changes
+
+    if changes.enabled():
+        add(Check(OK if changes.pin_path().exists() else FAIL, "კონფიგურაციის ცვლილებები ჩართულია (დადასტურებით)"
+                  + ("" if changes.pin_path().exists() else " — PIN არ არის"), "გაუშვი: python -m netagent change-pin"))
+
     # -- inventory & devices ----------------------------------------------------------------
     inv_path = settings.inventory_path
     if not inv_path.exists():

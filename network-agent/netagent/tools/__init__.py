@@ -28,6 +28,7 @@ class ToolContext:
     history: Any = None  # LatencyHistory
     syslog: Any = None  # SyslogStore
     services: Any = None  # Services (runbooks, vendors, new devices)
+    buttons: list = field(default_factory=list)  # Button(label, command) to show under the answer
 
 
 def _obj(properties: dict, required: list[str]) -> dict:

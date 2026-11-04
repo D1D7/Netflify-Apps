@@ -465,6 +465,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_change_pin(args: argparse.Namespace) -> int:
+    import getpass
+
+    from .features.changes import enabled, set_pin
+
+    pin = getpass.getpass("ახალი PIN (6-12 ციფრი): ").strip()
+    if pin != getpass.getpass("გაიმეორე PIN: ").strip():
+        console.print("[red]PIN-ები არ ემთხვევა[/red]")
+        return 1
+    try:
+        set_pin(pin)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    console.print("[green]✅ PIN დაყენდა.[/green]" + ("" if enabled() else " ცვლილებების ჩასართავად .env-ში ჩაწერე: NETAGENT_CHANGES=on"))
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     # separate process: the demo must set its own settings before netagent.config is imported
     import subprocess
@@ -569,6 +587,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--disable-totp", action="store_true")
     p_serve = sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
     p_serve.add_argument("--log-file", help="ლოგების ჩაწერა ფაილში (ავტომატური გაშვებისთვის)")
+    sub.add_parser("change-pin", help="PIN კონფიგურაციის ცვლილებების დასადასტურებლად")
     sub.add_parser("demo", help="სადემონსტრაციო ვირტუალური ქსელი (რეალური მოწყობილობების გარეშე)")
     p_doc = sub.add_parser("doctor", help="ყველაფრის შემოწმება: რა აკლია და როგორ გავასწორო")
     p_doc.add_argument("--offline", action="store_true", help="API key-ს/Telegram-ის ონლაინ შემოწმების გარეშე")
@@ -613,6 +632,7 @@ def main(argv: list[str] | None = None) -> int:
         "serve": cmd_serve,
         "doctor": cmd_doctor,
         "demo": cmd_demo,
+        "change-pin": cmd_change_pin,
         "discover": cmd_discover,
         "health": cmd_health,
         "graph": cmd_graph,

@@ -87,6 +87,7 @@ ProgressCallback = Callable[[str, dict[str, Any]], None]
 class Reply:
     text: str
     files: list[Path] = field(default_factory=list)  # e.g. Excel exports to send to the user
+    buttons: list = field(default_factory=list)  # e.g. "approve change" buttons added by tools
 
     def __str__(self) -> str:
         return self.text
@@ -164,7 +165,7 @@ class NetAgent:
             except Exception as exc:  # noqa: BLE001
                 return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
             text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)
-            return Reply(text, [f for f in ctx.files if f.exists()])
+            return Reply(text, [f for f in ctx.files if f.exists()], list(ctx.buttons))
 
     def _budget_message(self) -> str:
         budget = self.usage.daily_budget_usd if self.usage else 0

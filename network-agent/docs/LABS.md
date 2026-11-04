@@ -54,7 +54,11 @@ python -m netagent demo        (ნებისმიერ OS-ზე)
 | `/demo congestion` | R1-ის WAN 96%-ითაა დატვირთული | 📈 ალერტი, `/traffic R1` |
 | `/demo vpn` | VPN R1 ↔ MT-Branch დაეცა | `/runbook vpn`, `/path 10.20.0.15 192.168.10.21` |
 | `/demo dhcp` | USERS pool გაივსო | `/runbook dhcp` |
+| `/demo toner` | Printer-2F-ის ტონერი 6%-ზეა (SNMP) | 🖨 ალერტი, `/snmp Printer-2F` |
+| `/demo power` | დენი გაითიშა, UPS-1 ბატარეაზეა (SNMP) | 🔴 ალერტი, `/snmp UPS-1` |
 | `/demo restore` | ყველაფერი ნორმას უბრუნდება | 🟢 აღდგენის ალერტები |
+
+დემოში flow-ებიც მოდის, ანუ `/top` აჩვენებს, ვინ ტვირთავს ინტერნეტს. ცვლილებების სანახავად `.env`-ში ჩაწერე `NETAGENT_CHANGES=on`, დემოსთვის PIN დააყენე (`set NETAGENT_DATA_DIR=data\demo\data` და `python -m netagent change-pin`) და სცადე: `/change R1 interface GigabitEthernet0/0/2 ; description Printer ; no shutdown`.
 
 დემოში ასევე სცადე: `/firewall R1` (ACL-ში ორი „მკვდარი“ წესია), `/firewall MT-Branch`, `/path 192.168.10.21 8.8.8.8`, `/golden`, `/cve`, `/passport`, `/weekly`, `/quiz lab`.
 

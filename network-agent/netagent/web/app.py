@@ -43,6 +43,24 @@ SECURITY_HEADERS = {
 }
 
 
+def isp_overview(services) -> dict | None:
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from ..features.isp import monitor_for
+
+    m = monitor_for(services)
+    rows = m.samples(_dt.now() - _td(hours=24))
+    if not rows:
+        return None
+    step = max(1, len(rows) // 120)
+    points = [[r[0].isoformat(timespec="minutes"), r[2] if r[1] else None] for r in rows[::step]]
+    s = m.summary(1)
+    tests = s.get("speedtests") or []
+    return {"points": points, "uptime": s["uptime_percent"], "latency": rows[-1][2], "outages": len(s["outages"]),
+            "down_now": bool(s["down_now_since"]), "last_speed": tests[-1] if tests else None}
+
+
 def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> FastAPI:
     app = FastAPI(title="NetAgent", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -65,6 +83,19 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
+
+    # -- Prometheus metrics for Grafana (bearer token, off unless NETAGENT_METRICS_TOKEN is set) --
+    @app.get("/metrics")
+    async def metrics(request: Request):
+        import hmac as _hmac
+
+        from ..features.metrics import render
+
+        token = os.getenv("NETAGENT_METRICS_TOKEN", "")
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not token or not _hmac.compare_digest(given, token):
+            return Response(status_code=404 if not token else 401)
+        return Response(await asyncio.to_thread(render, services), media_type="text/plain; version=0.0.4")
 
     # -- static / PWA shell ----------------------------------------------------
     @app.get("/")
@@ -147,6 +178,7 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
                       "month": services.usage.month_cost(), "budget": services.usage.daily_budget_usd},
             "model": settings.model,
             "demo": os.getenv("NETAGENT_DEMO") == "1",
+            "isp": await asyncio.to_thread(isp_overview, services),
         }
 
     # -- commands & chat -----------------------------------------------------------
@@ -180,7 +212,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             try:
                 reply = await asyncio.to_thread(services.agent.chat, SESSION_ID, content, user="app",
                                                 channel="web", on_tool=on_tool)
-                await queue.put(("answer", {"text": reply.text, "files": [p.name for p in reply.files]}))
+                await queue.put(("answer", {"text": reply.text, "files": [p.name for p in reply.files],
+                                             "buttons": [{"label": b.label, "command": b.command} for b in reply.buttons]}))
             except Exception as exc:  # noqa: BLE001
                 log.exception("chat failed")
                 await queue.put(("answer", {"text": f"⚠️ შიდა შეცდომა: {type(exc).__name__}", "files": []}))

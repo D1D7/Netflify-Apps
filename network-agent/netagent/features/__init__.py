@@ -24,7 +24,7 @@ import os
 log = logging.getLogger("netagent.features")
 
 MODULES = ("homenet", "isp", "sites", "ops", "notify", "selfmgmt", "teach", "ifstats", "cve", "golden", "gitbackup",
-           "firewall", "pathtrace", "morebooks", "incidents", "passport", "weekly", "ipam")
+           "firewall", "pathtrace", "morebooks", "incidents", "passport", "weekly", "ipam", "changes", "flows", "snmp", "importers", "metrics")
 _installed = False
 
 
@@ -79,6 +79,21 @@ def jobs(monitoring) -> list:
 
 def notifiers(services) -> list:
     return _collect("notifiers", services)
+
+
+async def start(services, monitoring) -> list:
+    """Start network listeners of features (e.g. NetFlow). Returns transports to close on shutdown."""
+    out = []
+    for m in modules():
+        fn = getattr(m, "start", None)
+        if fn is not None:
+            try:
+                out += await fn(services, monitoring)
+            except OSError as exc:
+                log.warning("%s: listener could not start (%s)", m.__name__, exc)
+            except Exception:  # noqa: BLE001
+                log.exception("%s.start failed", m.__name__)
+    return out
 
 
 def bot_commands() -> list[tuple[str, str]]:

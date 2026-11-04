@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -117,6 +118,7 @@ EXCEL_FOLLOWUP = "წინა პასუხის მონაცემებ
 
 # Commands that take a while get a "working..." note first.
 SLOW_COMMANDS = {
+    "approve": "🛠 ვატარებ ცვლილებას უსაფრთხოდ (~20 წამი)...", "undo": "↩️ ვაბრუნებ...",
     "scan": "🏠 ვასკანერებ ქსელს (~30 წამი)...", "speedtest": "⚡ ვზომავ სიჩქარეს (~30 წამი)...",
     "sites": "🌐 ვამოწმებ საიტებს...", "update": "⬆️ ვამოწმებ განახლებებს...", "isp": "🌐 ვამზადებ...",
     "status": "🩺 ვამოწმებ მოწყობილობებს...", "backup": "💾 ვიღებ backup-ს...", "report": "📊 ვამზადებ რეპორტს...",
@@ -192,12 +194,17 @@ class TelegramBot:
 
     async def run_command(self, message: Message, line: str, user: str) -> None:
         parsed = commands.parse(line)
+        if parsed and parsed[0] in {"approve", "undo"} and len(parsed[1]) >= 2:
+            try:
+                await message.delete()  # the change PIN should not stay in the chat history
+            except Exception:  # noqa: BLE001 - callback buttons have no message of the user to delete
+                pass
         waiting = SLOW_COMMANDS.get(parsed[0]) if parsed else None
         note = await message.reply_text(waiting) if waiting else None
         try:
             result = await asyncio.to_thread(commands.run, self.s, line, user)
         except Exception as exc:  # noqa: BLE001
-            log.exception("command failed: %s", line)
+            log.exception("command failed: %s", re.sub(r"^(/(?:approve|undo) \d+) \S+", r"\1 ******", line))
             result = Result(f"⚠️ {type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''}")
         if note:
             try:
@@ -249,6 +256,8 @@ class TelegramBot:
         except Exception:  # noqa: BLE001
             pass
         followup = FOLLOWUP if steps and not reply.files and not reply.text.startswith(("⚠️", "💰")) else None
+        if getattr(reply, "buttons", None):
+            followup = self.markup(reply.buttons)
         await self.send_markdown(message, reply.text, reply_markup=followup)
         await self.send_files(message, reply.files)
 

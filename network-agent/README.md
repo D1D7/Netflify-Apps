@@ -2,7 +2,7 @@
 
 Telegram-ში ან ტერმინალში ჩვეულებრივ ენაზე წერ, მაგალითად „R1-ის IP-ები მაჩვენე“. აგენტი თვითონ უკავშირდება მოწყობილობას, ასრულებს საჭირო `show` ბრძანებებს და შედეგს მოწესრიგებული სახით გიბრუნებს.
 
-> **v0.1 (MVP) მუშაობს მხოლოდ წაკითხვის რეჟიმში.** მოწყობილობაზე ცვლილების შეტანა ტექნიკურად შეუძლებელია (იხ. [უსაფრთხოება](#-უსაფრთხოება)).
+> **ნაგულისხმევად NetAgent მხოლოდ კითხულობს.** კონფიგურაციის ცვლილება მხოლოდ მაშინ არის შესაძლებელი, თუ თვითონ ჩართავ (`NETAGENT_CHANGES=on`). ამის შემდეგაც ყოველ ცვლილებას შენ ადასტურებ PIN-ით, ხოლო rollback ავტომატურად ხდება (იხ. [ცვლილებები](#-კონფიგურაციის-ცვლილებები-დადასტურებით)).
 
 > 🎮 **მოწყობილობები ჯერ არ გაქვს?** გაუშვი `demo.bat` (ან `python -m netagent demo`): 4 ვირტუალური მოწყობილობა, ავარიის სცენარები და ყველა ფუნქცია, ნამდვილი ქსელის გარეშე. ნამდვილი MikroTik VirtualBox-ში: `lab-mikrotik.bat`. Cisco CML/GNS3: [docs/LABS.md](docs/LABS.md).
 
@@ -200,6 +200,46 @@ Cisco ACL-ებსა და MikroTik filter-ის წესებში პ�
 
 ### 📚 დამატებითი runbook-ები
 `/runbook vpn` (IPsec/WireGuard), `/runbook wifi` (სიგნალი, არხი, დანაკარგი როუტერამდე, ამ კომპიუტერიდან), `/runbook dhcp` (IP არ ეძლევა, pool გავსებულია, IP კონფლიქტები).
+
+### 🛠 კონფიგურაციის ცვლილებები (დადასტურებით)
+ნაგულისხმევად გამორთულია. ჩასართავად:
+1. `.env`-ში ჩაწერე `NETAGENT_CHANGES=on`.
+2. გაუშვი `python -m netagent change-pin`, რომ PIN დააყენო (6–12 ციფრი).
+
+როგორ მუშაობს:
+- **შეთავაზება:** სთხოვე AI-ს, მაგ. „Gi0/5-ს description დაუწერე Printer და ჩართე“, ან დაწერე `/change R1 interface Gi0/5 ; description Printer ; no shutdown`. NetAgent გაჩვენებს ზუსტ ბრძანებებს და რისკებს. ამ ეტაპზე მოწყობილობას არაფერი ეგზავნება.
+- **დადასტურება:** დააჭირე ✅-ს და შეიყვანე PIN. 5 არასწორი PIN-ის შემდეგ დადასტურება 15 წუთით იბლოკება. PIN ჩატში არ ჩანს: აპში დაფარულია, Telegram-ში კი შეტყობინება იშლება.
+- **უსაფრთხოდ გატარება:**
+  - **Cisco IOS/XE:** ჯერ იწერება rollback ასლი `flash:`-ზე და ირთვება `reload in 10` ტაიმერი. ბრძანებების გატარების შემდეგ NetAgent თავიდან უკავშირდება მოწყობილობას. თუ კავშირი არის, ტაიმერი უქმდება. თუ მოწყობილობამ ბრძანება არ მიიღო, ძველი კონფიგურაცია `configure replace`-ით ბრუნდება. თუ წვდომა დაიკარგა, მოწყობილობა 10 წუთში თვითონ დაბრუნდება ძველ (შენახულ) კონფიგურაციაზე.
+  - **Junos:** `commit confirmed 5`, შემდეგ კავშირის შემოწმება და `commit`.
+  - **MikroTik:** `/export` ასლი, შემდეგ გატარება და კავშირის შემოწმება. RouterOS-ზე ავტომატური დაბრუნება არ ხდება.
+- **შემდეგ:** 💾 **შენახვა** (`write memory`) ან ↩️ **დაბრუნება** (`/undo 7`, PIN-ით).
+- ყოველი ცვლილება იწერება audit-ში და backup-ის ისტორიაში (`/history`). `/changes` აჩვენებს ყველა ცვლილების სიას.
+- აკრძალულია: `reload`, `erase`, `write`, `username`, `enable secret`, `aaa`, `boot`, `/system reset`, `/user` და სხვა სახიფათო ბრძანებები.
+
+### 📊 ვინ ტვირთავს ინტერნეტს (NetFlow, `/top`)
+როუტერებმა flow-ები ამ კომპიუტერს უნდა გამოუგზავნონ, UDP 2055-ზე (NetFlow v5/v9, IPFIX):
+
+| პლატფორმა | ბრძანებები |
+|---|---|
+| MikroTik | `/ip traffic-flow set enabled=yes interfaces=all`<br>`/ip traffic-flow target add dst-address=192.168.1.10 port=2055 version=9` |
+| Cisco IOS-XE | `flow exporter NA` → `destination 192.168.1.10` → `transport udp 2055`<br>`flow monitor NA` → `exporter NA` → `record netflow ipv4 original-input`<br>`interface Gi0/0/0` → `ip flow monitor NA input` |
+
+`/top` ან „ვინ ტვირთავს ინტერნეტს?“ აჩვენებს ყველაზე აქტიურ შიდა მოწყობილობებს (⬇/⬆, სახელებით IPAM-დან და /scan-იდან), მიმართულებებს (YouTube, Netflix, Microsoft...) და აპლიკაციებს. დემოში flow-ები ავტომატურად მოდის.
+
+### 📟 SNMP: პრინტერები, UPS, კამერები
+მოწყობილობებისთვის, რომლებსაც SSH არ აქვთ: `device_type: snmp`, community კი `.env`-ში (`credentials: snmp: {community_env: SNMP_COMMUNITY}`). `/snmp Printer-2F` აჩვენებს სისტემას, ინტერფეისებს, **ტონერის დონეს** და **UPS-ის ბატარეას**. ალერტი მოდის, როცა ტონერი 10%-ზე ნაკლებია, როცა UPS ბატარეაზე გადავა (ანუ დენი გაითიშა) და როცა ბატარეა დაბალია. ხელმისაწვდომობის მონიტორინგიც ასეთ მოწყობილობებზე SNMP-ით მუშაობს.
+
+### 📈 Grafana (Prometheus)
+`.env`-ში მიუთითე `NETAGENT_METRICS_TOKEN=<გრძელი შემთხვევითი ტექსტი>`. ამის შემდეგ `http://127.0.0.1:8080/metrics` (Bearer token-ით) აბრუნებს შემდეგ მეტრიკებს: მოწყობილობების up/latency, ინტერნეტი, ინტერფეისების ტრაფიკი, შეცდომები და დატვირთვა, ალერტები, ღია ინციდენტები, AI ხარჯი, NetFlow ჰოსტები. Prometheus-ის კონფიგი `netagent/features/metrics.py`-შია.
+
+### 📥 NetBox / Zabbix
+`.env`-ში `NETBOX_URL` + `NETBOX_TOKEN`, ან `ZABBIX_URL` + `ZABBIX_TOKEN` (read-only token საკმარისია). `/import netbox` ან `/import zabbix` აჩვენებს სიას და ➕ ღილაკით ამატებს inventory-ში. Zabbix-ში ტიპს inventory-ის „OS“ ველიდან იღებს, ან tag-იდან `netagent_type`.
+
+### 💻 ტერმინალი და 📱 მალსახმობები
+- აპში არის **ტერმინალის** ჩანართი: ირჩევ მოწყობილობას, წერ ბრძანებას (ან აჭერ მზა ღილაკს) და შედეგს ხედავ. ↑ აბრუნებს წინა ბრძანებებს. მუშაობს მხოლოდ წაკითხვის რეჟიმში.
+- **ინტერნეტის ბარათი** dashboard-ზე აჩვენებს uptime-ს, latency-ის გრაფიკს 24 საათისთვის, გათიშვებს და ბოლო სიჩქარეს.
+- ტელეფონზე აპის ხატულაზე ხანგრძლივი დაჭერით გამოჩნდება მალსახმობები: **ქსელი**, **ტერმინალი**, **ჩატი**.
 
 ### 🛡 უსაფრთხოების აუდიტი (`/audit`)
 config-ები მოწმდება ცნობილ პრობლემებზე. თითოეულ პრობლემას აქვს სიმძიმე (🔴/🟠/🟡) და გამოსწორების ბრძანება:
@@ -435,6 +475,8 @@ Config-ები ინახება `backups/<მოწყობილობ�
 
 ## 🔒 უსაფრთხოება
 
+> ცვლილებების რეჟიმი (`NETAGENT_CHANGES=on`) ცალკე, ცხადად ჩასართავია. ის მუშაობს მხოლოდ PIN-ით, ყოველ ცვლილებაზე ცალკე დადასტურებით, ავტომატური rollback-ით და audit-ში ჩაწერით. AI-ს მხოლოდ შეთავაზება შეუძლია. წაკითხვის ყველა ბრძანება ისევ read-only guard-ს გადის.
+
 | ფენა | რას აკეთებს |
 |---|---|
 | **Read-only guard** (`security.py`) | ყველა ბრძანება მოწმდება მოწყობილობაზე გაგზავნამდე. დაშვებულია მხოლოდ `show`, `display` და `get`, RouterOS-ზე `print`/`export`, Linux-ზე ბრძანებების allowlist. იბლოკება `configure`, `reload`, `write`, `delete`, `clear`, `debug`, `set`, `add` და სხვა. |
@@ -547,6 +589,12 @@ network-agent/
 | `NETAGENT_TRAFFIC_INTERVAL` | `5` | ინტერფეისების მრიცხველები `watch`-იან მოწყობილობებზე, წუთები |
 | `NETAGENT_BACKUP_GIT` | `on` | backup-ების ისტორია git-ში |
 | `NVD_API_KEY` | — | NIST NVD-ის key (არასავალდებულო, CVE-ის სწრაფი შემოწმებისთვის) |
+| `NETAGENT_CHANGES` | `off` | კონფიგურაციის ცვლილებები დადასტურებით (`on` + `change-pin`) |
+| `NETAGENT_CHANGE_RELOAD_GUARD` | `on` | Cisco-ზე `reload in 10` დამცავი ტაიმერი ცვლილების დროს |
+| `NETAGENT_FLOW_PORT` | `2055` | NetFlow/IPFIX მიღება UDP-ით (`0` = გამორთული) |
+| `NETAGENT_SNMP_INTERVAL` / `SNMP_COMMUNITY` | `10` / `public` | SNMP მოწყობილობების შემოწმება (წთ) / ნაგულისხმევი community |
+| `NETAGENT_METRICS_TOKEN` | — | `/metrics` Prometheus/Grafana-სთვის (ცარიელი = გამორთული) |
+| `NETBOX_URL` / `NETBOX_TOKEN`, `ZABBIX_URL` / `ZABBIX_TOKEN` | — | `/import` |
 | `NETAGENT_SMTP_HOST` … `NETAGENT_EMAIL_TO` | — | ალერტები email-ით |
 | `NETAGENT_DISCORD_WEBHOOK` / `NETAGENT_SLACK_WEBHOOK` | — | ალერტები Discord-ში / Slack-ში |
 

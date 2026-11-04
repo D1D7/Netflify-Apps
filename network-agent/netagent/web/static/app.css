@@ -173,7 +173,7 @@ code, pre { font-family: var(--mono); }
 .view.scroll { overflow-y: auto; padding: 4px 16px 28px; display: block; }
 
 .tabbar {
-  display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface);
+  display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface);
   border-top: 1px solid var(--border); padding: 6px 8px calc(6px + var(--safe-bottom));
 }
 .tabbar button {
@@ -296,6 +296,47 @@ button.comp-btn { border: 0; background: none; padding: 0; }
 .send .icon { stroke-width: 2.4; width: 20px; height: 20px; }
 .send:disabled { background: var(--surface-3); color: var(--muted); }
 .send:not(:disabled):active { transform: scale(0.94); }
+
+/* ------------------------------------------------------------------ terminal */
+#view-term { display: flex; flex-direction: column; min-height: 0; padding: 10px 12px 8px; gap: 8px; }
+#view-term[hidden] { display: none; }
+.term-bar { display: flex; flex-direction: column; gap: 8px; }
+.term-bar select {
+  min-height: 44px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text); padding: 0 12px; font-size: 15px;
+}
+.term-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.term-chips button {
+  flex: none; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); border-radius: 999px;
+  padding: 7px 11px; font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.term-out {
+  flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 12px; border-radius: 14px; background: #0b1016; color: #d6e2ee;
+  font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; border: 1px solid var(--border);
+}
+.term-out .t-cmd { color: #7fb6ff; font-weight: 700; }
+.term-out .t-err { color: #ff8b8b; }
+.term-form {
+  display: flex; align-items: center; gap: 6px; padding: 5px 5px 5px 12px; border-radius: 26px;
+  border: 1px solid var(--border-strong); background: var(--surface);
+}
+.term-form:focus-within { border-color: var(--accent); }
+.term-prompt { font: 700 13px ui-monospace, monospace; color: var(--accent); white-space: nowrap; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+.term-form input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 8px 0; }
+.term-note { margin: 0; font-size: 11.5px; color: var(--muted); text-align: center; }
+
+/* ------------------------------------------------------------------ internet card */
+.isp-card {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+  margin: 12px 0 4px; padding: 14px 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border);
+}
+.isp-card .isp-title { font-weight: 700; font-size: 14px; display: flex; gap: 6px; align-items: center; }
+.isp-card .isp-sub { grid-column: 1 / -1; font-size: 12.5px; color: var(--text-2); }
+.isp-card .isp-big { font-size: 20px; font-weight: 800; text-align: right; }
+.isp-card svg.isp-chart { grid-column: 1 / -1; width: 100%; height: 46px; }
+.isp-card svg.isp-chart path { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.isp-card svg.isp-chart rect { fill: var(--danger, #e5484d); opacity: 0.35; }
+.isp-card.bad { border-color: var(--danger, #e5484d); }
 
 /* ------------------------------------------------------------------ markdown */
 .md { font-size: 15px; }

@@ -37,6 +37,8 @@ def configure_env() -> None:
         "NETAGENT_DEMO": "1",
         "NETAGENT_HOME_SCAN_INTERVAL": "0",
         "NETAGENT_SPEEDTEST_INTERVAL": "0",
+        "NETAGENT_FLOW_HOST": "127.0.0.1",
+        "NETAGENT_FLOW_PORT": os.environ.get("NETAGENT_DEMO_FLOW_PORT", "2056"),
         "PYTHONUTF8": "1",
     }
     os.environ.update(forced)
@@ -97,6 +99,12 @@ def main() -> None:
         "  Stop:      Ctrl+C\n"
     )
     print(banner, flush=True)
+    import threading
+
+    from .lab_extra import flow_sender
+
+    stop = threading.Event()
+    threading.Thread(target=flow_sender, args=(int(os.environ["NETAGENT_FLOW_PORT"]), stop), daemon=True).start()
     logging.getLogger("paramiko").setLevel(logging.WARNING)
     try:
         asyncio.run(amain())

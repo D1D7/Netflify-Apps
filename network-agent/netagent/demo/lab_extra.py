@@ -254,3 +254,246 @@ def extend(devices: dict, faults: dict) -> None:
     mt.outputs["/ip pool used print count-only"] = "18"
     mt.outputs["/ip dhcp-server lease print count-only"] = "18"
     mt.handlers.append(("/ip route print where ", lambda rest: mt_route_where(rest, faults)))
+
+
+# -- config mode (for the approved-changes feature) ------------------------------------------------
+_SUBMODES = ("interface ", "router ", "line ", "ip access-list ", "vlan ", "policy-map ", "class-map ")
+
+
+def _commit(dev, lines: list[str]) -> None:
+    if not lines:
+        return
+    cfg = dev.outputs.get("show running-config", "")
+    head, sep, _ = cfg.rpartition("\nend")
+    dev.outputs["show running-config"] = (head if sep else cfg) + "\n" + "\n".join(lines) + "\n!\nend"
+    dev.applied.extend(lines)
+
+
+def interact(dev, line: str, st: dict):
+    """Session-aware CLI for the fake devices. Returns (output, prompt) or None to fall back to respond()."""
+    low = line.strip().lower()
+    if dev.kind == "mikrotik":
+        if low.startswith("/export file="):
+            dev.saved["rollback"] = dev.outputs.get("/export", "")
+            return "", None
+        if low.startswith("/") and {"add", "set", "remove", "enable", "disable"} & set(low.split()):
+            if "bad-value" in low:
+                return "failure: invalid value for argument", None
+            dev.outputs["/export"] = dev.outputs.get("/export", "") + "\n" + line.strip()
+            dev.applied.append(line.strip())
+            return "", None
+        return None
+    exec_prompt = f"{dev.name}#"
+    waiting = st.pop("await", None)
+    if waiting == "copy":
+        dev.saved["rollback"] = dev.outputs.get("show running-config", "")
+        return "2154 bytes copied in 0.128 secs (16836 bytes/sec)", exec_prompt
+    if waiting == "reload":
+        dev.reload_pending = True
+        return "", exec_prompt
+    mode = st.get("mode", "")
+    if mode:
+        if not low:
+            return "", f"{dev.name}({mode})#"
+        if low in {"end", "\x1a"}:
+            _commit(dev, st.pop("lines", []))
+            st["mode"] = ""
+            return "", exec_prompt
+        if low == "exit":
+            if mode == "config":
+                _commit(dev, st.pop("lines", []))
+                st["mode"] = ""
+                return "", exec_prompt
+            st["mode"] = "config"
+            return "", f"{dev.name}(config)#"
+        if low.startswith("bad-command"):
+            return "                ^\n% Invalid input detected at '^' marker.", f"{dev.name}({mode})#"
+        indent = " " if mode != "config" and not low.startswith(_SUBMODES) else ""
+        st.setdefault("lines", []).append(indent + line.strip())
+        if low.startswith(_SUBMODES):
+            st["mode"] = "config-if" if low.startswith("interface") else "config-" + low.split()[0][:6]
+        return "", f"{dev.name}({st['mode']})#"
+    if low in {"configure terminal", "conf t", "config t", "configure"}:
+        st["mode"] = "config"
+        st["lines"] = []
+        return "Enter configuration commands, one per line.  End with CNTL/Z.", f"{dev.name}(config)#"
+    if low.startswith("copy running-config flash:"):
+        st["await"] = "copy"
+        return f"Destination filename [{low.split(':', 1)[1]}]? ", ""
+    if low == "reload in 10":
+        st["await"] = "reload"
+        return "Reload scheduled in 10 minutes by admin on vty0\nProceed with reload? [confirm]", ""
+    if low == "reload cancel":
+        dev.reload_pending = False
+        return "\n\n***\n*** --- SHUTDOWN ABORTED ---\n***", exec_prompt
+    if low.startswith("configure replace flash:"):
+        if "rollback" in dev.saved:
+            dev.outputs["show running-config"] = dev.saved["rollback"]
+            return "Total number of passes: 1\nRollback Done", exec_prompt
+        return "%Error opening flash:netagent-rollback.cfg (File not found)", exec_prompt
+    if low in {"write memory", "write mem", "wr", "copy running-config startup-config"}:
+        dev.saved["startup"] = dev.outputs.get("show running-config", "")
+        return "Building configuration...\n[OK]", exec_prompt
+    return None
+
+
+# -- NetFlow v5 generator (who is downloading) ------------------------------------------------------
+FLOW_PROFILE = [  # local, remote, remote port, Mbit/s down, Mbit/s up, proto
+    ("192.168.10.21", "142.250.180.14", 443, 24.0, 0.8, 6),    # YouTube (laptop)
+    ("192.168.10.22", "52.112.0.10", 3478, 3.5, 3.0, 17),      # Teams call
+    ("192.168.10.30", "91.189.91.39", 80, 6.0, 0.2, 6),        # Raspberry Pi updates
+    ("192.168.10.23", "8.8.8.8", 53, 0.05, 0.03, 17),          # DNS
+    ("10.20.0.15", "203.0.113.50", 443, 0.5, 9.0, 6),          # branch backup upload
+]
+
+
+def v5_packet(records: list[tuple[str, str, int, int, int, int, int]], seq: int) -> bytes:
+    import socket as _s
+    import struct
+
+    now = time.time()
+    head = struct.pack("!HHIIIIBBH", 5, len(records), 360000, int(now), 0, seq, 0, 0, 0)
+    body = b""
+    for src, dst, sport, dport, pkts, octets, proto in records:
+        body += struct.pack("!4s4s4sHHIIIIHHBBBBHHBBH", _s.inet_aton(src), _s.inet_aton(dst), _s.inet_aton("0.0.0.0"),
+                            1, 2, pkts, octets, 0, 0, sport, dport, 0, 0, proto, 0, 0, 0, 24, 24, 0)
+    return head + body
+
+
+def flow_sender(port: int, stop, every: float = 10.0) -> None:
+    import socket as _s
+
+    seq = 0
+    with _s.socket(_s.AF_INET, _s.SOCK_DGRAM) as sock:
+        while not stop.wait(every):
+            recs = []
+            for local, remote, rport, down, up, proto in FLOW_PROFILE:
+                k = random.uniform(0.7, 1.3)
+                d, u = int(down * 1e6 / 8 * every * k), int(up * 1e6 / 8 * every * k)
+                lport = random.randint(40000, 60000)
+                recs.append((remote, local, rport, lport, d // 1200 + 1, d, proto))
+                recs.append((local, remote, lport, rport, u // 600 + 1, u, proto))
+            try:
+                sock.sendto(v5_packet(recs, seq), ("127.0.0.1", port))
+            except OSError:
+                pass
+            seq += len(recs)
+
+
+# -- fake SNMP agents: a printer and a UPS --------------------------------------------------------
+def _snmp_value(v) -> bytes:
+    from ..features.snmp import _int, _oid, _tlv
+
+    if isinstance(v, tuple):
+        kind, n = v
+        tag = {"ticks": 0x43, "gauge": 0x42, "counter": 0x41}[kind]
+        return _tlv(tag, n.to_bytes(max(1, (n.bit_length() + 7) // 8), "big"))
+    if isinstance(v, int):
+        return _int(v)
+    if isinstance(v, str) and v.startswith("oid:"):
+        return _oid(v[4:])
+    return _tlv(0x04, str(v).encode())
+
+
+def _oid_key(o: str) -> tuple:
+    return tuple(int(x) for x in o.split("."))
+
+
+class FakeSnmpAgent:
+    def __init__(self, host: str, port: int, mib: dict, community: str = "public") -> None:
+        import socket as _s
+        import threading
+
+        self.mib, self.community = mib, community
+        self.sock = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+        self.sock.bind((host, port))
+        self.host, self.port = host, self.sock.getsockname()[1]
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self) -> None:
+        from ..features.snmp import _decode_oid, _int, _oid, _read, _tlv
+
+        while True:
+            try:
+                data, addr = self.sock.recvfrom(65535)
+            except OSError:
+                return
+            try:
+                _, msg, _ = _read(data, 0)
+                _, _, i = _read(msg, 0)
+                _, comm, i = _read(msg, i)
+                pdu_tag, pdu, _ = _read(msg, i)
+                if comm.decode() != self.community:
+                    continue
+                _, rid, j = _read(pdu, 0)
+                _, _, j = _read(pdu, j)
+                _, _, j = _read(pdu, j)
+                _, vbs, _ = _read(pdu, j)
+                out, k = b"", 0
+                keys = sorted(self.mib, key=_oid_key)
+                while k < len(vbs):
+                    _, vb, k = _read(vbs, k)
+                    _, oid_raw, _ = _read(vb, 0)
+                    oid = _decode_oid(oid_raw)
+                    if pdu_tag == 0xA1:  # GETNEXT
+                        nxt = next((o for o in keys if _oid_key(o) > _oid_key(oid)), None)
+                        out += _tlv(0x30, _oid(nxt) + _snmp_value(self.mib[nxt])) if nxt else _tlv(0x30, _oid(oid) + b"\x82\x00")
+                    else:
+                        v = self.mib.get(oid)
+                        out += _tlv(0x30, _oid(oid) + (_snmp_value(v() if callable(v) else v) if v is not None else b"\x81\x00"))
+                body = _tlv(0x02, rid) + _int(0) + _int(0) + _tlv(0x30, out)
+                self.sock.sendto(_tlv(0x30, _int(1) + _tlv(0x04, comm) + _tlv(0xA2, body)), addr)
+            except Exception:  # noqa: BLE001 - malformed packet
+                continue
+
+    def stop(self) -> None:
+        self.sock.close()
+
+
+def printer_mib(faults: dict) -> dict:
+    return {
+        "1.3.6.1.2.1.1.1.0": "HP LaserJet Pro M404dn, FW 2.11", "1.3.6.1.2.1.1.3.0": ("ticks", 86400 * 100 * 12),
+        "1.3.6.1.2.1.1.5.0": "Printer-2F", "1.3.6.1.2.1.1.6.0": "2nd floor",
+        "1.3.6.1.2.1.2.2.1.2.1": "HP ETHERNET", "1.3.6.1.2.1.2.2.1.8.1": 1,
+        "1.3.6.1.2.1.43.11.1.1.6.1.1": "Black Cartridge HP 59A", "1.3.6.1.2.1.43.11.1.1.8.1.1": 3000,
+        "1.3.6.1.2.1.43.11.1.1.9.1.1": 180 if faults.get("toner") else 1950,
+    }
+
+
+def ups_mib(faults: dict) -> dict:
+    on_batt = faults.get("power")
+    return {
+        "1.3.6.1.2.1.1.1.0": "APC Smart-UPS 1500 (RFC1628)", "1.3.6.1.2.1.1.3.0": ("ticks", 86400 * 100 * 40),
+        "1.3.6.1.2.1.1.5.0": "UPS-1", "1.3.6.1.2.1.1.6.0": "server room",
+        "1.3.6.1.2.1.33.1.2.1.0": 2, "1.3.6.1.2.1.33.1.2.3.0": 22 if on_batt else 48,
+        "1.3.6.1.2.1.33.1.2.4.0": 71 if on_batt else 100, "1.3.6.1.2.1.33.1.4.1.0": 5 if on_batt else 3,
+    }
+
+
+class _LiveMib(dict):
+    """Re-evaluates the MIB on each access so scenarios change answers immediately."""
+
+    def __init__(self, fn, faults):
+        super().__init__(fn(faults))
+        self.fn, self.faults = fn, faults
+
+    def __getitem__(self, k):
+        return self.fn(self.faults)[k]
+
+    def get(self, k, default=None):
+        return self.fn(self.faults).get(k, default)
+
+
+def start_snmp(ips: list[str], port: int, faults: dict) -> list[FakeSnmpAgent]:
+    agents = []
+    for ip, fn in zip(ips, (printer_mib, ups_mib)):
+        try:
+            agents.append(FakeSnmpAgent(ip, port, _LiveMib(fn, faults)))
+        except OSError:
+            pass
+    return agents
+
+
+SCENARIOS.update({"toner": "Printer-2F-ის ტონერი 6%-ზეა", "power": "დენი გაითიშა — UPS-1 ბატარეაზეა"})
+LATER.update({"toner": "ალერტი რამდენიმე წუთში (/snmp Printer-2F)", "power": "ალერტი რამდენიმე წუთში (/snmp UPS-1)"})

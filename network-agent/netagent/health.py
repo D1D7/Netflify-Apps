@@ -30,6 +30,11 @@ class Reachability:
 
 
 def check_one(device: Device, timeout: float = 3.0) -> Reachability:
+    if device.device_type == "snmp":  # no SSH: ask over SNMP instead of a TCP port
+        from .features.snmp import probe_device
+
+        up, ms, reason = probe_device(device)
+        return Reachability(device.name, device.host, device.port if device.port != 22 else 161, up, ms, reason)
     start = time.monotonic()
     try:
         with socket.create_connection((device.host, device.port), timeout=timeout):

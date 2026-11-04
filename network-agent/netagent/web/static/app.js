@@ -30,6 +30,7 @@ const VIEW_TITLES = {
   chat: ["NetAgent", "AI ქსელის ასისტენტი"],
   dash: ["ქსელი", "მოწყობილობები და მოვლენები"],
   settings: ["პარამეტრები", "აპი და ანგარიში"],
+  term: ["ტერმინალი", "read-only ბრძანებები მოწყობილობებზე"],
 };
 
 // ---------------------------------------------------------------- small helpers
@@ -219,7 +220,7 @@ function renderMessage(m) {
         const x = el("button");
         x.type = "button";
         x.textContent = btn.label;
-        x.addEventListener("click", () => send(btn.command));
+        x.addEventListener("click", () => (NEEDS_PIN.test(btn.command) ? askPin(btn.command) : send(btn.command)));
         b.appendChild(x);
       }
       box.appendChild(b);
@@ -326,6 +327,17 @@ function setBusy(b) {
   updateSend();
 }
 
+// The change PIN is never shown or kept in the chat history.
+const NEEDS_PIN = /^\/(?:approve|undo) \d+$/;
+function maskPin(text) {
+  return text.replace(/^(\/(?:approve|undo) \d+) \S+/, "$1 ••••••");
+}
+
+function askPin(command) {
+  const pin = window.prompt("PIN ცვლილების დასადასტურებლად:");
+  if (pin && /^\d{4,12}$/.test(pin.trim())) send(`${command} ${pin.trim()}`);
+}
+
 async function send(text) {
   text = (text ?? "").trim();
   const files = state.attachments.slice();
@@ -333,7 +345,7 @@ async function send(text) {
   switchView("chat");
   setBusy(true);
   addMessage({
-    role: "user", text,
+    role: "user", text: maskPin(text),
     thumbs: files.filter((f) => f.preview).map((f) => f.preview),
     files: files.filter((f) => !f.preview).map((f) => f.file.name),
   });
@@ -381,7 +393,7 @@ async function sendChat(text, files) {
       if (event === "answer") {
         answered = true;
         pending.remove();
-        addMessage({ role: "bot", text: data.text, files: data.files });
+        addMessage({ role: "bot", text: data.text, files: data.files, buttons: data.buttons });
       }
     });
     if (!answered) throw new Error("კავშირი გაწყდა — სცადე თავიდან");
@@ -623,6 +635,7 @@ function renderOverview() {
   tile("dollar", "AI ხარჯი", `$${data.usage.today.toFixed(2)}`, "დღეს",
     data.usage.budget > 0 && data.usage.today >= data.usage.budget);
 
+  renderIsp(data.isp);
   $("#dev-search-wrap").hidden = data.devices.length < 8;
   renderDevices();
 
@@ -641,6 +654,32 @@ function renderOverview() {
     state.demoShown = Boolean(data.demo);
     renderQuick(state.demoShown);
   }
+}
+
+// Internet card: uptime, last speed test and a latency line with outage marks (24 h).
+function renderIsp(isp) {
+  const card = $("#isp-card");
+  if (!isp || !isp.points?.length) { card.hidden = true; return; }
+  card.hidden = false;
+  card.classList.toggle("bad", Boolean(isp.down_now));
+  const W = 300, H = 46, pts = isp.points;
+  const vals = pts.map((p) => p[1]).filter((v) => v != null);
+  const max = Math.max(...vals, 1), min = Math.min(...vals, 0);
+  const x = (i) => (i / Math.max(pts.length - 1, 1)) * W;
+  const y = (v) => H - 3 - ((v - min) / Math.max(max - min, 1)) * (H - 6);
+  let d = "", pen = false, gaps = "";
+  pts.forEach((p, i) => {
+    if (p[1] == null) { pen = false; gaps += `<rect x="${x(i).toFixed(1)}" y="0" width="${Math.max(W / pts.length, 2).toFixed(1)}" height="${H}"/>`; return; }
+    d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`;
+    pen = true;
+  });
+  const speed = isp.last_speed ? `⬇ ${isp.last_speed.down_mbps} ⬆ ${isp.last_speed.up_mbps} Mbit/s` : "სიჩქარე: /speedtest";
+  card.innerHTML = `<div class="isp-title">${icon("network")}<span>ინტერნეტი</span></div>
+    <div class="isp-big"></div><svg class="isp-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${gaps}<path d="${d}"/></svg>
+    <div class="isp-sub"></div>`;
+  card.querySelector(".isp-big").textContent = isp.down_now ? "🔴 არ არის" : `${isp.uptime ?? "—"}%`;
+  card.querySelector(".isp-sub").textContent = `${isp.latency != null ? `${isp.latency} ms` : ""} · გათიშვები 24 სთ: ${isp.outages} · ${speed}`;
+  card.onclick = () => send("/isp");
 }
 
 async function loadOverview() {
@@ -718,7 +757,7 @@ function applyLayout() {
   app.classList.toggle("two-pane", two);
   app.dataset.view = state.view;
   const sidePane = two && state.view === "chat";
-  for (const v of ["chat", "dash", "settings"]) $(`#view-${v}`).hidden = !(v === state.view || (sidePane && v === "dash"));
+  for (const v of ["chat", "dash", "settings", "term"]) $(`#view-${v}`).hidden = !(v === state.view || (sidePane && v === "dash"));
   const [title, sub] = VIEW_TITLES[state.view];
   $("#view-title").textContent = title;
   $("#view-sub").textContent = sidePane ? "ჩატი და ქსელი ერთად" : sub;
@@ -737,6 +776,71 @@ function switchView(name) {
       .catch(() => {});
   }
   if (name === "chat") scrollDown();
+  if (name === "term") openTerminal();
+}
+
+// ---------------------------------------------------------------- terminal (read-only, via /cmd)
+
+const TERM_CHIPS = {
+  mikrotik: ["/ip address print", "/ip route print", "/interface print", "/ip arp print", "/log print", "/system resource print"],
+  juniper: ["show interfaces terse", "show route", "show bgp summary", "show log messages | last 30", "show system uptime"],
+  default: ["show ip interface brief", "show ip route", "show interfaces description", "show version", "show logging", "show cdp neighbors"],
+};
+const termHistory = [];
+let termPos = 0;
+
+async function openTerminal() {
+  if (!state.overview) await loadOverview();
+  const sel = $("#term-dev");
+  const devices = state.overview?.devices || [];
+  const current = sel.value;
+  sel.replaceChildren(...devices.map((d) => {
+    const o = el("option");
+    o.value = d.name;
+    o.textContent = `${d.up ? "🟢" : "🔴"} ${d.name} · ${d.host}`;
+    return o;
+  }));
+  if (current) sel.value = current;
+  termChips();
+  setTimeout(() => $("#term-input").focus(), 50);
+}
+
+function termChips() {
+  const dev = (state.overview?.devices || []).find((d) => d.name === $("#term-dev").value);
+  const type = dev?.type || "";
+  const list = type.startsWith("mikrotik") ? TERM_CHIPS.mikrotik : type.startsWith("juniper") ? TERM_CHIPS.juniper : TERM_CHIPS.default;
+  $("#term-prompt").textContent = dev ? `${dev.name}${type.startsWith("mikrotik") ? " >" : "#"}` : "#";
+  $("#term-chips").replaceChildren(...list.map((c) => {
+    const b = el("button");
+    b.type = "button";
+    b.textContent = c;
+    b.addEventListener("click", () => runTerm(c));
+    return b;
+  }));
+}
+
+function termWrite(text, cls) {
+  const out = $("#term-out");
+  const span = el("span", cls || "");
+  span.textContent = text + "\n";
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+async function runTerm(cmd) {
+  const dev = $("#term-dev").value;
+  cmd = cmd.trim();
+  if (!dev || !cmd) return;
+  termHistory.push(cmd);
+  termPos = termHistory.length;
+  termWrite(`${$("#term-prompt").textContent} ${cmd}`, "t-cmd");
+  try {
+    const r = await apiJson("/api/command", { method: "POST", json: { line: `/cmd ${dev} ${cmd}` } });
+    const text = (r.text || r.error || "").replace(/^📟.*\n/, "").replace(/```\w*\n?/g, "").trim();
+    termWrite(text || "(ცარიელი პასუხი)", /^(⚠️|⛔)/.test(text) ? "t-err" : "");
+  } catch (err) {
+    termWrite(`⚠️ ${err.message}`, "t-err");
+  }
 }
 
 function showLogin(info = {}) {
@@ -833,6 +937,19 @@ async function init() {
 
   // navigation & dashboard
   document.querySelectorAll(".tabbar button").forEach((b) => b.addEventListener("click", () => switchView(b.dataset.view)));
+  $("#term-dev").addEventListener("change", termChips);
+  $("#term-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("#term-input");
+    runTerm(input.value);
+    input.value = "";
+  });
+  $("#term-input").addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" && termPos > 0) { termPos -= 1; e.target.value = termHistory[termPos]; e.preventDefault(); }
+    if (e.key === "ArrowDown") { termPos = Math.min(termHistory.length, termPos + 1); e.target.value = termHistory[termPos] || ""; }
+  });
+  const initial = new URLSearchParams(location.search).get("view");
+  if (initial && VIEW_TITLES[initial]) state.view = initial;
   $("#pane-expand").addEventListener("click", () => switchView("dash"));
   // Re-layout when the Fold is opened/closed or rotated.
   for (const mq of [MQ_WIDE, MQ_SEG_SIDE, MQ_SEG_STACK]) mq.addEventListener("change", () => { applyLayout(); scrollDown(); });

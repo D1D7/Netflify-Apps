@@ -135,6 +135,8 @@
 
       <div class="tiles pane-hide" id="tiles"></div>
 
+      <div class="isp-card" id="isp-card" hidden></div>
+
       <h2 class="section pane-hide">სწრაფი მოქმედებები</h2>
       <div class="actions pane-hide" id="dash-actions"></div>
 
@@ -218,9 +220,24 @@
       <p class="about" id="about"></p>
     </section>
 
+    <section id="view-term" class="view" hidden>
+      <div class="term-bar">
+        <select id="term-dev" aria-label="მოწყობილობა"></select>
+        <div class="term-chips" id="term-chips"></div>
+      </div>
+      <pre id="term-out" class="term-out" aria-live="polite"></pre>
+      <form id="term-form" class="term-form" autocomplete="off">
+        <span class="term-prompt" id="term-prompt">#</span>
+        <input id="term-input" type="text" spellcheck="false" autocapitalize="off" placeholder="show ip interface brief" enterkeyhint="send">
+        <button class="send" type="submit" aria-label="გაშვება"><svg class="icon"><use href="#i-send"/></svg></button>
+      </form>
+      <p class="term-note">მხოლოდ წაკითხვა: show / print / ping. ცვლილებები — ჩატით, დადასტურებით.</p>
+    </section>
+
     <nav class="tabbar">
       <button type="button" data-view="chat" class="active"><span class="tab-ico"><svg class="icon"><use href="#i-chat"/></svg></span>ჩატი</button>
       <button type="button" data-view="dash"><span class="tab-ico"><svg class="icon"><use href="#i-network"/></svg><span class="badge" id="tab-badge" hidden></span></span>ქსელი</button>
+      <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span>ტერმინალი</button>
       <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span>პარამეტრები</button>
     </nav>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
