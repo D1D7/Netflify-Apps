@@ -186,8 +186,9 @@ class FakeDevice:
     kind: str  # "cisco" | "mikrotik"
     ip: str
     port: int
-    outputs: dict[str, str] = field(default_factory=dict)
+    outputs: dict = field(default_factory=dict)  # command -> text, or a function returning text (live data)
     online: bool = True
+    handlers: list = field(default_factory=list)  # (command prefix, fn(rest) -> text)
 
     @property
     def prompt(self) -> str:
@@ -250,17 +251,32 @@ def build_devices(ips: list[str], ports: list[int]) -> dict[str, FakeDevice]:
         "/ip neighbor print detail": "",
         "/export": MT_EXPORT,
     }
-    return {d.name: d for d in (r1, core, acc, mt)}
+    devices = {d.name: d for d in (r1, core, acc, mt)}
+    from . import lab_extra
 
+    lab_extra.extend(devices, FAULTS)
+    return devices
+
+
+FAULTS: dict = {}  # active scenario flags read by the live outputs in lab_extra
 
 ALIASES = {"show run": "show running-config", "sh run": "show running-config", "show ver": "show version",
            "sh ip int br": "show ip interface brief", "show ip int brief": "show ip interface brief"}
 
 
+def _out(value) -> str:
+    return value() if callable(value) else value
+
+
 def respond(device: FakeDevice, line: str) -> str:
+    import re
+
     line = ALIASES.get(line, line)
     if line in device.outputs:
-        return device.outputs[line]
+        return _out(device.outputs[line])
+    for prefix, fn in device.handlers:
+        if line.startswith(prefix):
+            return fn(line[len(prefix):])
     if not line or line.startswith(("terminal", "screen-length")):
         return ""
     if line.startswith("show clock"):
@@ -272,11 +288,15 @@ def respond(device: FakeDevice, line: str) -> str:
         base = ALIASES.get(base.strip(), base.strip())
         if base in device.outputs:
             mode, _, needle = flt.strip().partition(" ")
-            rows = device.outputs[base].splitlines()
+            rows = _out(device.outputs[base]).splitlines()
+            try:
+                rx = re.compile(needle, re.I)  # IOS include/exclude take a regex
+            except re.error:
+                rx = re.compile(re.escape(needle), re.I)
             if mode.startswith("inc"):
-                return "\n".join(r for r in rows if needle.lower() in r.lower())
+                return "\n".join(r for r in rows if rx.search(r))
             if mode.startswith("exc"):
-                return "\n".join(r for r in rows if needle.lower() not in r.lower())
+                return "\n".join(r for r in rows if not rx.search(r))
             if mode.startswith("beg"):
                 for i, r in enumerate(rows):
                     if needle.lower() in r.lower():
@@ -382,8 +402,12 @@ SCENARIOS = {
     "down": "SW-Access-2 მთლიანად გაითიშა",
     "newdevice": "ქსელში უცნობი მოწყობილობა ჩაერთო",
     "bruteforce": "MT-Branch-ზე პაროლის გამოცნობის მცდელობა (წარუმატებელი შესვლები)",
-    "restore": "ყველაფერი ნორმას დაუბრუნდა",
 }
+from .lab_extra import SCENARIOS as _EXTRA  # noqa: E402
+
+SCENARIOS.update(_EXTRA)
+from .lab_extra import LATER as _LATER_EXTRA  # noqa: E402
+SCENARIOS["restore"] = "ყველაფერი ნორმას დაუბრუნდა"
 
 
 class DemoLab:
@@ -419,7 +443,14 @@ class DemoLab:
     # -- scenarios ------------------------------------------------------------------
     def scenario(self, name: str) -> str:
         r1, core, acc, mt = (self.devices[n] for n in ("R1", "SW-Core-1", "SW-Access-2", "MT-Branch"))
+        if name in {"errors", "congestion", "vpn", "dhcp"}:
+            FAULTS[name] = True
+            if name == "vpn":
+                self.syslog("R1", 3, "%LINEPROTO-5-UPDOWN: Line protocol on Interface Tunnel0, changed state to down")
+                self.syslog("R1", 4, "%CRYPTO-4-IKMP_NO_SA: IKE message from 198.51.100.2 has no SA")
+            return SCENARIOS[name]
         if name == "uplink":
+            FAULTS["uplink"] = True
             o = r1.outputs
             o["show ip interface brief"] = o["show ip interface brief"].replace(
                 "GigabitEthernet0/0/0   203.0.113.2     YES NVRAM  up                    up",
@@ -449,6 +480,7 @@ class DemoLab:
             for i in range(6):
                 self.syslog("MT-Branch", 4, f"login failure for user admin from 45.155.205.{10 + i} via ssh")
         elif name == "restore":
+            FAULTS.clear()
             for n, d in self.devices.items():
                 d.outputs = dict(self._baseline[n])
             if not acc.online:
@@ -469,6 +501,8 @@ class DemoLab:
                 Button("🔴 WAN ჩავარდა", "/demo uplink"), Button("🔥 CPU", "/demo cpu"),
                 Button("📝 config", "/demo config"), Button("⚫ switch გაითიშა", "/demo down"),
                 Button("🆕 უცნობი მოწყობილობა", "/demo newdevice"), Button("🔐 brute force", "/demo bruteforce"),
+                Button("⚡ CRC შეცდომები", "/demo errors"), Button("📈 გადატვირთული ხაზი", "/demo congestion"),
+                Button("🔒 VPN დაეცა", "/demo vpn"), Button("📦 DHCP გაივსო", "/demo dhcp"),
                 Button("✅ აღდგენა", "/demo restore")])
         name = args[0].lower()
         if name not in SCENARIOS:
@@ -476,11 +510,14 @@ class DemoLab:
         text = self.scenario(name)
         later = {"uplink": "ალერტები (Syslog მაშინვე, მონიტორინგი ~1 წთ-ში)", "cpu": "ალერტი ~1 წთ-ში",
                  "config": "Syslog-ის ალერტი მაშინვე, diff-ი ~2 წთ-ში", "down": "ალერტი ~1 წთ-ში",
-                 "newdevice": "ალერტი ~1 წთ-ში", "bruteforce": "ალერტი მაშინვე", "restore": "აღდგენის ალერტები ~1 წთ-ში"}[name]
+                 "newdevice": "ალერტი ~1 წთ-ში", "bruteforce": "ალერტი მაშინვე", "restore": "აღდგენის ალერტები ~1 წთ-ში",
+                 **_LATER_EXTRA}[name]
         hint = {"uplink": "სცადე: /runbook internet ან ჰკითხე „რატომ არ მუშაობს ინტერნეტი?“",
                 "config": "სცადე: „ვინ შეცვალა SW-Core-1-ის config და რა შეცვალა?“",
                 "down": "სცადე: /runbook device SW-Access-2", "newdevice": "სცადე: /newdevices",
-                "cpu": "სცადე: /runbook slow", "bruteforce": "სცადე: /logs MT-Branch", "restore": ""}[name]
+                "cpu": "სცადე: /runbook slow", "bruteforce": "სცადე: /logs MT-Branch", "restore": "",
+                "errors": "სცადე: /errors ან „რატომ წყდება Wi-Fi ლობიში?“", "congestion": "სცადე: /traffic R1",
+                "vpn": "სცადე: /runbook vpn ან /path 10.20.0.15 192.168.10.21", "dhcp": "სცადე: /runbook dhcp"}[name]
         return Result(f"🎮 **სცენარი:** {text}\n⏱ {later}" + (f"\n💡 {hint}" if hint else ""),
                       buttons=[Button("✅ აღდგენა", "/demo restore")] if name != "restore" else [])
 
@@ -536,10 +573,12 @@ devices:
     device_type: cisco_ios
     site: HQ
     role: access-switch
+    watch: {{interfaces: [Gi1/0/48], cpu: 90}}
   MT-Branch:
     host: {d['MT-Branch'].ip}
     port: {d['MT-Branch'].port}
     device_type: mikrotik_routeros
     site: Branch-1
     role: router
+    watch: {{cpu: 90}}
 """

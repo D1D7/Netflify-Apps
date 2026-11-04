@@ -104,7 +104,7 @@ def update_cmd(s, args, user) -> Result:
 def backup_paths() -> list[tuple[Path, str]]:
     """(file, name in zip). .env is never included: it holds the API keys and passwords."""
     out = []
-    skip_dirs = {"demo", "__pycache__"}
+    skip_dirs = {"demo", "__pycache__", ".git"}
     for base, prefix in ((settings.data_dir, "data"), (settings.backup_dir, "backups")):
         if base.exists():
             for p in base.rglob("*"):

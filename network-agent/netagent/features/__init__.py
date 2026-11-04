@@ -11,6 +11,7 @@ A feature module may define:
     jobs(monitoring) -> [(name, every_seconds, first_delay, coroutine_fn)]
     notifiers(services) -> [async fn(alert)]
     suppress(services, alert) -> bool              keep an alert quiet (still logged)
+    on_alert(services, alert)                      sees every alert (e.g. incident memory)
     prompt_extra(services) -> str                  appended to the AI system prompt
 """
 
@@ -22,7 +23,8 @@ import os
 
 log = logging.getLogger("netagent.features")
 
-MODULES = ("homenet", "isp", "sites", "ops", "notify", "selfmgmt", "teach")
+MODULES = ("homenet", "isp", "sites", "ops", "notify", "selfmgmt", "teach", "ifstats", "cve", "golden", "gitbackup",
+           "firewall", "pathtrace", "morebooks", "incidents", "passport", "weekly", "ipam")
 _installed = False
 
 
@@ -92,6 +94,16 @@ def suppress(services, alert) -> bool:
         except Exception:  # noqa: BLE001
             log.exception("%s.suppress failed", m.__name__)
     return False
+
+
+def on_alert(services, alert) -> None:
+    for m in modules():
+        fn = getattr(m, "on_alert", None)
+        if fn is not None:
+            try:
+                fn(services, alert)
+            except Exception:  # noqa: BLE001
+                log.exception("%s.on_alert failed", m.__name__)
 
 
 def prompt_extra(services) -> str:

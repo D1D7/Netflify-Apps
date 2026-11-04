@@ -63,6 +63,7 @@ class MonitoringService:
             self.s.alerts.add(alert.kind, ("🛠 (სამუშაოები) " if quiet else "") + alert.text, alert.devices)
         except Exception:  # noqa: BLE001
             log.exception("alert log write failed")
+        features.on_alert(self.s, alert)
         if quiet:
             return
         for notify in self.notifiers:

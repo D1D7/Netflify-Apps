@@ -50,7 +50,13 @@ python -m netagent demo        (ნებისმიერ OS-ზე)
 | `/demo down` | SW-Access-2 გაითიშა | 🔴 ალერტი, `/runbook device SW-Access-2` |
 | `/demo newdevice` | ქსელში უცნობი Raspberry Pi გამოჩნდა | 🆕 ალერტი, `/newdevices` |
 | `/demo bruteforce` | MT-Branch-ზე პაროლის გამოცნობა | 🔐 ალერტი მაშინვე, `/logs MT-Branch` |
+| `/demo errors` | SW-Access-2-ის Gi1/0/5-ზე CRC იზრდება (ცუდი კაბელი) | ⚡ ალერტი, `/errors` |
+| `/demo congestion` | R1-ის WAN 96%-ითაა დატვირთული | 📈 ალერტი, `/traffic R1` |
+| `/demo vpn` | VPN R1 ↔ MT-Branch დაეცა | `/runbook vpn`, `/path 10.20.0.15 192.168.10.21` |
+| `/demo dhcp` | USERS pool გაივსო | `/runbook dhcp` |
 | `/demo restore` | ყველაფერი ნორმას უბრუნდება | 🟢 აღდგენის ალერტები |
+
+დემოში ასევე სცადე: `/firewall R1` (ACL-ში ორი „მკვდარი“ წესია), `/firewall MT-Branch`, `/path 192.168.10.21 8.8.8.8`, `/golden`, `/cve`, `/passport`, `/weekly`, `/quiz lab`.
 
 დემოში მონიტორინგი ყოველ წუთში მუშაობს (ნამდვილში 5 წთ), რომ ალერტებს დიდხანს არ ელოდო. სცადე AI-ც: „რატომ არ მუშაობს ინტერნეტი?“, „ვინ შეცვალა SW-Core-1-ის config?“, „რამდენად უსაფრთხოა ქსელი?“.
 

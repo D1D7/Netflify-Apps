@@ -93,6 +93,9 @@ class BackupStore:
         d.mkdir(parents=True, exist_ok=True)
         path = d / f"{when.strftime(_TS_FORMAT)}.cfg"
         path.write_text(config, encoding="utf-8")
+        from .features import gitbackup
+
+        gitbackup.commit(self.root, path, device)
         return Snapshot(device, path, when), True
 
     def snapshot_before(self, device: str, moment: datetime) -> Snapshot | None:
