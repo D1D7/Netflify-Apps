@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
 import re
+import sys
 
 import uvicorn
 
@@ -59,6 +61,30 @@ async def amain() -> None:
         log.info("Telegram bot started")
 
     tasks = start_scheduler(monitoring)
+
+    syslog_transport = None
+    if settings.syslog_port > 0:
+        from .syslogd import start_syslog
+
+        hosts = {d.host: d.name for d in services.inventory().devices.values()}
+
+        def resolve(ip: str) -> str:
+            try:
+                return {d.host: d.name for d in services.inventory().devices.values()}.get(ip, ip)
+            except Exception:  # noqa: BLE001
+                return hosts.get(ip, ip)
+
+        def on_alert(device: str, text: str) -> None:
+            if not services.mutes.is_muted(device):
+                asyncio.create_task(monitoring.emit(Alert("syslog", text, [device])))
+
+        try:
+            syslog_transport, _ = await start_syslog(settings.syslog_host, settings.syslog_port,
+                                                     services.syslog, resolve, on_alert)
+        except OSError as exc:
+            log.warning("syslog udp/%s ვერ გაიხსნა (%s) — ლოგების მიღება გამორთულია. "
+                        "შეცვალე NETAGENT_SYSLOG_PORT ან გაუშვი ადმინისტრატორად.", settings.syslog_port, exc)
+
     app = create_app(services, monitoring, auth, push)
     config = uvicorn.Config(app, host=settings.web_host, port=settings.web_port, proxy_headers=True,
                             forwarded_allow_ips="127.0.0.1", log_level="info", access_log=False)
@@ -68,14 +94,34 @@ async def amain() -> None:
     finally:
         for t in tasks:
             t.cancel()
+        if syslog_transport is not None:
+            syslog_transport.close()
         if telegram_app is not None:
             await telegram_app.updater.stop()
             await telegram_app.stop()
             await telegram_app.shutdown()
 
 
-def main() -> None:
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+def setup_logging(log_file: str | None = None) -> None:
+    fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    if log_file or sys.stderr is None:  # pythonw.exe (Windows autostart) has no console
+        path = log_file or os.path.join(str(settings.data_dir.parent), "logs", "netagent.log")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+        logging.basicConfig(format=fmt, level=logging.INFO, handlers=[handler])
+        # stray prints go to a separate file: Windows can't rotate a file that is held open twice
+        console_path = os.path.splitext(path)[0] + "-console.log"
+        stream = open(console_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115 - lives for the process
+        if sys.stdout is None:
+            sys.stdout = stream
+        if sys.stderr is None:
+            sys.stderr = stream
+    else:
+        logging.basicConfig(format=fmt, level=logging.INFO)
+
+
+def main(log_file: str | None = None) -> None:
+    setup_logging(log_file)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(amain())
 

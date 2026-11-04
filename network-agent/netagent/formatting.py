@@ -86,6 +86,8 @@ TOOL_LABELS = {
     "save_note": "📝 შენიშვნის შენახვა",
     "delete_note": "📝 შენიშვნის წაშლა",
     "discover_devices": "🔍 სკანირება: {network}",
+    "network_topology": "🗺 ქსელის რუკა",
+    "syslog_search": "📜 ლოგები",
 }
 
 

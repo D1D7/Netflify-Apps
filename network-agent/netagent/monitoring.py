@@ -30,7 +30,8 @@ class Alert:
     @property
     def title(self) -> str:
         return {"down": "🔴 მოწყობილობა მიუწვდომელია", "up": "🟢 აღდგა", "watch": "🚨 ალერტი",
-                "config": "📝 Config შეიცვალა", "report": "📊 დღიური რეპორტი"}.get(self.kind, "NetAgent")
+                "config": "📝 Config შეიცვალა", "report": "📊 დღიური რეპორტი",
+                "syslog": "📜 ლოგის ალერტი"}.get(self.kind, "NetAgent")
 
 
 Notifier = Callable[[Alert], Awaitable[None]]

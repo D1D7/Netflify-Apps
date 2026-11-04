@@ -339,6 +339,45 @@ def discover_cancel(s, args, user) -> Result:
     return Result("გაუქმდა.")
 
 
+def map_cmd(s, args, user) -> Result:
+    from .topology import discover_topology, draw_map, format_links
+
+    inv = s.inventory()
+    if not inv.devices:
+        return Result("inventory ცარიელია. მოწყობილობების საპოვნელად: /discover 10.0.0.0/24")
+    data = discover_topology(inv, settings.data_dir / "topology.json")
+    down = {r.device for r in check_many(list(inv.devices.values()), timeout=2.0, retries=0) if not r.up}
+    path = settings.export_dir / f"map-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+    draw_map(data, path, down)
+    text = format_links(data)
+    if len(text) > 900:  # Telegram photo captions are short: send the list separately
+        return Result(text, image=None, files=[path])
+    return Result(text, image=path)
+
+
+def logs(s, args, user) -> Result:
+    from .syslogd import SEVERITY
+
+    device, words = "", list(args)
+    if words:
+        try:
+            device = s.inventory().get(words[0]).name
+            words = words[1:]
+        except InventoryError:
+            pass
+    rows = s.syslog.search(device, " ".join(words), hours=24, limit=25)
+    if not rows:
+        return Result("📜 ლოგები არ არის (ბოლო 24 სთ)."
+                      + ("" if device or words else "\nმოწყობილობებზე syslog მიმართე ამ კომპიუტერზე: udp/"
+                         + str(settings.syslog_port) + ". მაგ. Cisco: logging host <IP>"))
+    icon = {s_: i for s_, i in zip(SEVERITY, ["🔥", "🔥", "🔥", "🔴", "⚠️", "🔹", "▫️", "▫️"])}
+    lines = [f"📜 **ლოგები**{' — ' + device if device else ''} (ბოლო {len(rows)})", "```"]
+    for r in rows:
+        lines.append(f"{icon.get(r['severity'], '▫️')} {r['ts'][11:16]} {r['device']:<10} {r['message'][:110]}")
+    lines.append("```")
+    return Result("\n".join(lines))
+
+
 HELP = """**სწრაფი ბრძანებები (AI-ს გარეშე, უფასო):**
 /status — რომელი მოწყობილობაა ჩართული/გათიშული
 /health R1 — ინტერფეისები, BGP, OSPF, CPU
@@ -352,6 +391,8 @@ HELP = """**სწრაფი ბრძანებები (AI-ს გარ�
 /mute R1 2h · /mute all 30m · /unmute R1
 /note R1 ტექსტი · /notes R1 · /delnote R1 2
 /usage — AI ხარჯი
+/map — ქსელის რუკა (CDP/LLDP)
+/logs R1 — ბოლო ლოგები (/logs R1 UPDOWN — ძებნით)
 /devices — მოწყობილობების სია
 
 ყველაფერი დანარჩენი — უბრალოდ დაწერე ჩვეულებრივად, მაგ. „R1-ის IP-ები მაჩვენე“."""
@@ -380,6 +421,8 @@ COMMANDS: dict[str, Callable] = {
     "discover": discover,
     "discover-add": discover_add,
     "discover-cancel": discover_cancel,
+    "map": map_cmd,
+    "logs": logs,
     "help": help_cmd,
 }
 

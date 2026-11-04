@@ -26,6 +26,7 @@ class ToolContext:
     files: list[Path] = field(default_factory=list)  # files produced this turn (sent to the user)
     notes: Any = None  # NoteStore
     history: Any = None  # LatencyHistory
+    syslog: Any = None  # SyslogStore
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -237,6 +238,23 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "input_schema": _obj({"device": {"type": "string"}, "number": {"type": "integer", "minimum": 1}}, ["number"]),
     },
     {
+        "name": "network_topology",
+        "description": "ქსელის რუკა CDP/LLDP-დან: რომელი მოწყობილობა რომელს უერთდება და რომელი პორტებით. "
+        "chart=true ქმნის სურათს (PNG) და მომხმარებელს უგზავნის.",
+        "input_schema": _obj({"chart": {"type": "boolean"}}, []),
+    },
+    {
+        "name": "syslog_search",
+        "description": "მოწყობილობების syslog-ში ძებნა (NetAgent თვითონ იღებს ლოგებს). ფილტრები: device, ტექსტი "
+        "(მაგ. 'UPDOWN', 'CONFIG', 'LOGIN'), hours, min_severity (emerg/alert/crit/err/warning/notice/info). "
+        "გამოიყენე 'რატომ ჩავარდა', 'ვინ შეცვალა', 'რა შეცდომებია' ტიპის კითხვებზე.",
+        "input_schema": _obj({
+            "device": {"type": "string"}, "text": {"type": "string"},
+            "hours": {"type": "integer", "minimum": 1, "maximum": 336},
+            "min_severity": {"type": "string", "enum": ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]},
+        }, []),
+    },
+    {
         "name": "discover_devices",
         "description": "ასკანერებს ქსელს (მაქს. /22) SSH-ზე და ცდილობს ამოიცნოს მოწყობილობის ტიპი და hostname "
         "credentials პროფილით. inventory-ში არაფერს წერს — დასამატებლად მომხმარებელს შესთავაზე /discover "
@@ -259,6 +277,7 @@ DEVICE_TOOLS = {
     "subnet_usage",
     "device_health",
     "discover_devices",
+    "network_topology",
 }
 
 
@@ -457,6 +476,36 @@ def _discover_devices(ctx: ToolContext, network: str, credentials: str = "defaul
             "how_to_add": "Telegram: /discover " + network + "  ·  CLI: python -m netagent discover " + network + " --add"}
 
 
+def _network_topology(ctx: ToolContext, chart: bool = False) -> Any:
+    from datetime import datetime
+
+    from ..topology import discover_topology, draw_map
+
+    data = discover_topology(ctx.inventory, settings.data_dir / "topology.json")
+    if chart and (data["links"] or data["devices"]):
+        path = settings.export_dir / f"map-{datetime.now().strftime('%Y%m%d-%H%M%S')}.png"
+        draw_map(data, path)
+        ctx.files.append(path)
+        data["chart"] = "სურათი შეიქმნა და მომხმარებელს გაეგზავნება"
+    return data
+
+
+def _syslog_search(ctx: ToolContext, device: str = "", text: str = "", hours: int = 24,
+                   min_severity: str = "debug") -> Any:
+    from ..syslogd import SEVERITY
+
+    if ctx.syslog is None:
+        return {"error": "syslog მიუწვდომელია"}
+    if device:
+        try:
+            device = ctx.inventory.get(device).name
+        except InventoryError:
+            pass
+    rows = ctx.syslog.search(device, text, hours, SEVERITY.index(min_severity), limit=80)
+    return {"count": len(rows), "entries": rows,
+            "note": "ცარიელია? მოწყობილობებზე syslog უნდა იყოს მიმართული NetAgent-ის კომპიუტერზე (udp/514)" if not rows else ""}
+
+
 _HANDLERS: dict[str, Callable[..., Any]] = {
     "list_devices": lambda ctx, filter="": [d.public_info() for d in ctx.inventory.filter(filter)],
     "get_device_data": _get_device_data,
@@ -481,6 +530,8 @@ _HANDLERS: dict[str, Callable[..., Any]] = {
     "save_note": _save_note,
     "delete_note": _delete_note,
     "discover_devices": _discover_devices,
+    "network_topology": _network_topology,
+    "syslog_search": _syslog_search,
 }
 
 _SCHEMA_BY_NAME = {t["name"]: t for t in TOOL_SCHEMAS}

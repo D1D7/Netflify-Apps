@@ -48,6 +48,7 @@ HELP_TEXT = """\
 /cmd all show clock — ყველა მოწყობილობაზე
 /audit — უსაფრთხოების აუდიტი
 /backup — config-ების backup
+/map — ქსელის რუკა · /logs R1 — ლოგები
 /report — ქსელის რეპორტი
 /discover 10.0.0.0/24 — ახალი მოწყობილობების ძებნა
 /mute R1 2h — ალერტების დადუმება (/mute all 30m) · /unmute R1
@@ -62,6 +63,8 @@ BOT_COMMANDS = [
     BotCommand("health", "მოწყობილობის მდგომარეობა: /health R1"),
     BotCommand("graph", "latency გრაფიკი: /graph R1"),
     BotCommand("cmd", "show ბრძანება: /cmd R1 show ip route"),
+    BotCommand("map", "ქსელის რუკა (CDP/LLDP)"),
+    BotCommand("logs", "ლოგები: /logs R1"),
     BotCommand("audit", "უსაფრთხოების აუდიტი"),
     BotCommand("report", "ქსელის რეპორტი"),
     BotCommand("backup", "config-ების backup"),
@@ -113,6 +116,7 @@ SLOW_COMMANDS = {
     "status": "🩺 ვამოწმებ მოწყობილობებს...", "backup": "💾 ვიღებ backup-ს...", "report": "📊 ვამზადებ რეპორტს...",
     "audit": "🛡 ვამოწმებ კონფიგურაციებს...", "health": "🩺 ვამოწმებ...", "cmd": "💻 ვასრულებ...",
     "discover": "🔍 ვასკანერებ (შეიძლება 1-2 წუთი დასჭირდეს)...", "graph": "📈 ვხატავ გრაფიკს...",
+    "map": "🗺 ვაგროვებ CDP/LLDP-ს და ვხატავ რუკას...",
 }
 
 class TelegramBot:
@@ -330,7 +334,7 @@ class TelegramBot:
     async def notify(self, alert: Alert) -> None:
         if self.app is None:
             return
-        header = "🚨 **ალერტი**\n" if alert.kind in {"down", "up", "watch"} else ""
+        header = "🚨 **ალერტი**\n" if alert.kind in {"down", "up", "watch", "syslog"} else ""
         text = header + alert.text
         markup = self.markup(mute_buttons(alert.devices)) if alert.mutable and alert.devices else None
         chunks = split_markdown(text)

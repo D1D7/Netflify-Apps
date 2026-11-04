@@ -447,6 +447,8 @@ const QUICK = [
   ["shield", "amber", "აუდიტი", "/audit"],
   ["save", "green", "Backup", "/backup"],
   ["server", "blue", "Inventory", "/devices"],
+  ["network", "blue", "რუკა", "/map"],
+  ["file", "gray", "ლოგები", "/logs"],
   ["note", "violet", "შენიშვნები", "/notes"],
   ["help", "gray", "ბრძანებები", "/help"],
 ];
@@ -463,7 +465,7 @@ function renderQuick() {
   }
   const grid = $("#dash-actions");
   grid.replaceChildren();
-  for (const [ico, color, label, cmd] of QUICK.slice(0, 6)) {
+  for (const [ico, color, label, cmd] of QUICK.filter((q) => q[3] !== "/help").slice(0, 6)) {
     const b = el("button", "action", `<span class="a-ico ${color}">${icon(ico)}</span><span></span>`);
     b.type = "button";
     b.lastElementChild.textContent = label;
@@ -504,7 +506,7 @@ function sparkline(values) {
 
 const EVENT_STYLE = {
   down: ["alert", "red"], up: ["check", "green"], watch: ["pulse", "amber"],
-  config: ["note", "violet"], report: ["report", "blue"],
+  config: ["note", "violet"], report: ["report", "blue"], syslog: ["file", "amber"],
 };
 
 function renderDevices() {

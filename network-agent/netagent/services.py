@@ -12,6 +12,7 @@ from .history import LatencyHistory
 from .notes import NoteStore
 from .state import StateStore
 from .usage import UsageTracker
+from .syslogd import SyslogStore
 from .watch import DeepMonitor
 
 
@@ -24,6 +25,7 @@ class Services:
     notes: NoteStore
     history: LatencyHistory
     alerts: AlertLog
+    syslog: SyslogStore
     monitor: ReachabilityMonitor = field(default_factory=ReachabilityMonitor)
     deep: DeepMonitor = field(default_factory=DeepMonitor)
     # Pending /discover results waiting for the user's "add" confirmation: token -> (candidates, credentials)
@@ -36,8 +38,10 @@ class Services:
         notes = NoteStore(state)
         history = LatencyHistory(settings.data_dir / "latency")
         agent = NetAgent(client=client, usage=usage, notes=notes, history=history)
+        syslog = SyslogStore(settings.data_dir / "syslog")
+        agent.syslog = syslog
         return cls(agent=agent, state=state, mutes=AlertMutes(state), usage=usage, notes=notes,
-                   history=history, alerts=AlertLog(state))
+                   history=history, alerts=AlertLog(state), syslog=syslog)
 
     def inventory(self):
         return self.agent.inventory()

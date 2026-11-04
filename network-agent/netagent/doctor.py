@@ -170,6 +170,14 @@ def run_checks(online: bool = True) -> list[Check]:
         add(Check(OK, f"პორტი {settings.web_port} თავისუფალია"))
     except OSError:
         add(Check(WARN, f"პორტი {settings.web_port} დაკავებულია", "NetAgent უკვე ხომ არ არის გაშვებული? ან შეცვალე NETAGENT_WEB_PORT"))
+    if settings.syslog_port > 0:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.bind((settings.syslog_host, settings.syslog_port))
+            add(Check(OK, f"syslog პორტი udp/{settings.syslog_port} თავისუფალია"))
+        except OSError:
+            add(Check(WARN, f"syslog პორტი udp/{settings.syslog_port} ვერ გაიხსნა",
+                      "დაკავებულია ან სჭირდება ადმინისტრატორი (Linux). შეცვალე NETAGENT_SYSLOG_PORT, მაგ. 5514"))
     try:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         probe = settings.data_dir / ".write-test"

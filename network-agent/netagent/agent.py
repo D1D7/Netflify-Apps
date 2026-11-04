@@ -44,6 +44,10 @@ on anything abnormal (interfaces down, errors, duplicate IPs, missing routes).
 - To test reachability *from a device* (e.g. ping from R1 to 8.8.8.8), use run_show_command with that device's ping/traceroute syntax; the ping/traceroute tools run from the agent's own server.
 - Notes: before troubleshooting a device, call get_notes for it (ISP contacts, circuit IDs and known issues live there). When the user asks you to remember something, call save_note. After an incident is resolved, offer to save a short note with the cause and the fix.
 - "How is R1?" / health questions: call device_health; latency/uptime trends: latency_history (chart=true when the user wants a graph).
+- Topology questions ("what is connected to SW1?", "draw the network"): call network_topology \
+(chart=true for a picture).
+- Log questions ("why did Gi0/1 go down?", "who changed the config?", "any errors on R1?"): \
+call syslog_search first — devices send their syslog to NetAgent.
 - Images: users may send photos or screenshots (console errors, topology drawings, racks, labels). Transcribe relevant CLI/error text exactly, explain it, and verify against live device data with tools when the photo refers to a device in the inventory.
 - Exports: when the user asks for Excel/a file/an export, or a table is too large for chat, collect the data with tools and call export_excel. The file is delivered automatically; in your answer give only a short summary, not the full table again.
 - Everything is read-only. Configuration changes are not possible in this version: if the user \
@@ -103,6 +107,7 @@ class NetAgent:
         self.usage = usage
         self.notes = notes
         self.history = history
+        self.syslog = None  # SyslogStore, set by Services
         self._sessions: dict[str, _Session] = defaultdict(_Session)
         self._sessions_lock = threading.Lock()
         self._inventory: Inventory | None = None
@@ -149,7 +154,8 @@ class NetAgent:
                 session.needs_reset = False
                 notice = "ℹ️ საუბრის ისტორია ძალიან გაიზარდა და თავიდან დავიწყე.\n\n"
             try:
-                ctx = ToolContext(inventory=self.inventory(), user=user, notes=self.notes, history=self.history)
+                ctx = ToolContext(inventory=self.inventory(), user=user, notes=self.notes, history=self.history,
+                                  syslog=self.syslog)
             except Exception as exc:  # noqa: BLE001
                 return Reply(f"⚠️ inventory ვერ ჩაიტვირთა: {exc}")
             text = notice + self._run_turn(session, user_content, ctx, channel, on_tool)

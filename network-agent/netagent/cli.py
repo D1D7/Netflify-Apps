@@ -463,7 +463,7 @@ def cmd_web_setup(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import main as server_main
 
-    server_main()
+    server_main(log_file=args.log_file)
     return 0
 
 
@@ -559,7 +559,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--totp", action="store_true", help="2FA-ს ჩართვაც (Google Authenticator)")
     p_ws.add_argument("--totp-only", action="store_true", help="მხოლოდ 2FA-ს ჩართვა/ახალი გასაღები")
     p_ws.add_argument("--disable-totp", action="store_true")
-    sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
+    p_serve = sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
+    p_serve.add_argument("--log-file", help="ლოგების ჩაწერა ფაილში (ავტომატური გაშვებისთვის)")
     p_doc = sub.add_parser("doctor", help="ყველაფრის შემოწმება: რა აკლია და როგორ გავასწორო")
     p_doc.add_argument("--offline", action="store_true", help="API key-ს/Telegram-ის ონლაინ შემოწმების გარეშე")
     p_disc = sub.add_parser("discover", help="ქსელში მოწყობილობების ძებნა (SSH) და ამოცნობა")

@@ -86,6 +86,31 @@ Telegram-ში ან ტერმინალში ჩვეულებრ�
 ### 📸 ფოტოები
 Telegram-ში გაუგზავნე ფოტო ან screenshot (კონსოლის შეცდომა, ტოპოლოგიის ნახაზი, rack, ლეიბლი) და შეგიძლია კითხვაც დაურთო. აგენტი ტექსტს ამოიკითხავს, აგიხსნის და საჭიროების შემთხვევაში ცოცხალ მოწყობილობაზეც გადაამოწმებს. CLI-ში: `python -m netagent ask --image error.png "რა შეცდომაა?"`.
 
+### 🗺 ქსელის რუკა (`/map`)
+აგენტი ყველა მოწყობილობიდან კითხულობს CDP/LLDP neighbor-ებს და ხატავს რუკას: ვინ ვისთანაა მიერთებული და რომელი პორტებით. ლურჯი წრე inventory-ში არსებული მოწყობილობაა, ნაცრისფერი უცნობი neighbor (მაგ. AP ან ტელეფონი), წითელი კი მიუწვდომელი მოწყობილობა. AI-საც შეგიძლია ჰკითხო: „რა უერთდება SW1-ს?“
+
+MikroTik-ზე საჭიროა `/ip neighbor discovery-settings` ჩართული, Cisco-ზე `cdp run` ან `lldp run`.
+
+### 📜 Syslog (`/logs`)
+NetAgent ლოგებს იღებს UDP 514 პორტზე. მოწყობილობებზე მიუთითე NetAgent-ის კომპიუტერის IP:
+
+| პლატფორმა | ბრძანება |
+|---|---|
+| Cisco IOS | `logging host 192.168.1.10` |
+| MikroTik | `/system logging action add name=netagent target=remote remote=192.168.1.10`<br>`/system logging add topics=info,!debug action=netagent` |
+| Juniper | `set system syslog host 192.168.1.10 any notice` |
+
+ალერტი ავტომატურად მოდის შემდეგ შემთხვევებში:
+- 📝 config-ის შეცვლა (ვინ შეცვალა და საიდან)
+- 🔴 ინტერფეისის ჩავარდნა
+- 🔴 BGP/OSPF neighbor-ის დაცემა
+- 🔐 5 ან მეტი წარუმატებელი შესვლა 10 წუთში
+- 🔥 critical დონის შეტყობინებები
+
+ერთნაირი ალერტი ერთ მოწყობილობაზე 10 წუთში ერთხელ მეტჯერ არ მოდის. `/logs R1` აჩვენებს ბოლო ლოგებს, ხოლო `/logs R1 UPDOWN` ძებნით ფილტრავს. AI-საც შეგიძლია ჰკითხო: „რატომ ჩავარდა Gi0/1?“, „ვინ შეცვალა R1-ის config?“. ლოგები 14 დღე ინახება.
+
+> Windows-ში პირველ გაშვებაზე Firewall იკითხავს Python-ისთვის წვდომის დაშვებას. აირჩიე **Private networks → Allow**, სხვა შემთხვევაში ლოგები ვერ მოვა.
+
 ### 🛡 უსაფრთხოების აუდიტი (`/audit`)
 config-ები მოწმდება ცნობილ პრობლემებზე. თითოეულ პრობლემას აქვს სიმძიმე (🔴/🟠/🟡) და გამოსწორების ბრძანება:
 
@@ -198,6 +223,7 @@ python -m netagent serve
 6. **`setup-password.bat`**: აპის პაროლი და 2FA.
 7. **`doctor.bat`**: ამოწმებს ყველაფერს და გეუბნება, რა აკლია.
 8. **`start.bat`**: უშვებს NetAgent-ს. კომპიუტერზე გახსენი http://127.0.0.1:8080
+9. **`autostart-on.bat`**: NetAgent Windows-ში შესვლისას ავტომატურად, ფონურ რეჟიმში ჩაირთვება (ფანჯრის გარეშე, გათიშვის შემთხვევაში თავიდან ირთვება). ლოგები: `logs\netagent.log`. გამორთვა: **`autostart-off.bat`**.
 
 > ⚠️ სანამ NetAgent მუშაობს, კომპიუტერი არ უნდა დაიძინოს: Settings → System → Power → Sleep → **Never** (როცა დენზეა შეერთებული).
 
@@ -308,7 +334,7 @@ python -m netagent note R1 --delete 1
 python -m netagent ask --image error.png "რა შეცდომაა?"
 ```
 
-Telegram-ის ბრძანებები: `/menu`, `/status`, `/health`, `/graph`, `/discover`, `/note`, `/notes`, `/delnote`, `/cmd`, `/audit`, `/report`, `/backup`, `/mute`, `/unmute`, `/usage`, `/devices`, `/reset` (საუბრის თავიდან დაწყება), `/id`, `/help`.
+Telegram-ის ბრძანებები: `/menu`, `/status`, `/map`, `/logs`, `/health`, `/graph`, `/discover`, `/note`, `/notes`, `/delnote`, `/cmd`, `/audit`, `/report`, `/backup`, `/mute`, `/unmute`, `/usage`, `/devices`, `/reset` (საუბრის თავიდან დაწყება), `/id`, `/help`.
 
 ### Backup-ები
 Config-ები ინახება `backups/<მოწყობილობა>/<თარიღი>.cfg` ფაილებში. ახალი ფაილი იქმნება **მხოლოდ მაშინ, როცა config შეიცვალა**, ამიტომ ფაილების სია ცვლილებების ისტორიაცაა. დროის ხაზები და მსგავსი ცვალებადი სტრიქონები (`! Last configuration change...`) შედარებისას იგნორირდება.
@@ -365,6 +391,8 @@ network-agent/
 │   ├── history.py        # latency ისტორია
 │   ├── charts.py         # გრაფიკები (PNG)
 │   ├── notes.py          # შენიშვნები მოწყობილობებზე
+│   ├── topology.py       # ქსელის რუკა (CDP/LLDP)
+│   ├── syslogd.py        # syslog მიმღები და ალერტები
 │   ├── commands.py       # სწრაფი ბრძანებები (Telegram + აპი)
 │   ├── monitoring.py     # ალერტები და განრიგი
 │   ├── services.py       # საერთო ობიექტები
@@ -409,6 +437,7 @@ network-agent/
 | `NETAGENT_WEB_HOST` / `NETAGENT_WEB_PORT` | `127.0.0.1` / `8080` | აპის მისამართი (Tailscale-ისთვის ასე დატოვე) |
 | `NETAGENT_WEB_PASSWORD` | — | აპის პაროლი, თუ `web-setup` არ გამოგიყენებია |
 | `NETAGENT_TELEGRAM` | `on` | Telegram-ის ჩართვა/გამორთვა `serve`-ში |
+| `NETAGENT_SYSLOG_PORT` | `514` | syslog-ის მიღება UDP-ით (`0` = გამორთული) |
 | `NETAGENT_DEEP_MONITOR_INTERVAL` | `5` | `watch`-იანი მოწყობილობების შემოწმება წუთებში (`0` = გამორთული) |
 
 ## ტესტები
