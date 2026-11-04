@@ -117,6 +117,8 @@ EXCEL_FOLLOWUP = "წინა პასუხის მონაცემებ
 
 # Commands that take a while get a "working..." note first.
 SLOW_COMMANDS = {
+    "scan": "🏠 ვასკანერებ ქსელს (~30 წამი)...", "speedtest": "⚡ ვზომავ სიჩქარეს (~30 წამი)...",
+    "sites": "🌐 ვამოწმებ საიტებს...", "update": "⬆️ ვამოწმებ განახლებებს...", "isp": "🌐 ვამზადებ...",
     "status": "🩺 ვამოწმებ მოწყობილობებს...", "backup": "💾 ვიღებ backup-ს...", "report": "📊 ვამზადებ რეპორტს...",
     "audit": "🛡 ვამოწმებ კონფიგურაციებს...", "health": "🩺 ვამოწმებ...", "cmd": "💻 ვასრულებ...",
     "discover": "🔍 ვასკანერებ (შეიძლება 1-2 წუთი დასჭირდეს)...", "graph": "📈 ვხატავ გრაფიკს...",
@@ -341,7 +343,8 @@ class TelegramBot:
             return
         header = "🚨 **ალერტი**\n" if alert.kind in {"down", "up", "watch", "syslog"} else ""
         text = header + alert.text
-        markup = self.markup(mute_buttons(alert.devices)) if alert.mutable and alert.devices else None
+        buttons = list(getattr(alert, "buttons", []) or []) + (mute_buttons(alert.devices) if alert.mutable and alert.devices else [])
+        markup = self.markup(buttons) if buttons else None
         chunks = split_markdown(text)
         for uid in settings.telegram_allowed_users:
             for i, chunk in enumerate(chunks):
@@ -355,7 +358,10 @@ class TelegramBot:
     # -- application -----------------------------------------------------------
     async def post_init(self, app: Application) -> None:
         try:
-            await app.bot.set_my_commands(BOT_COMMANDS)
+            from . import features
+
+            extra = [BotCommand(n, d) for n, d in features.bot_commands()]
+            await app.bot.set_my_commands((BOT_COMMANDS + extra)[:100])
         except Exception:  # noqa: BLE001
             log.warning("could not set bot commands")
 

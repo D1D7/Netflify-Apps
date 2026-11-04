@@ -122,6 +122,12 @@ def run_checks(online: bool = True) -> list[Check]:
         if not settings.telegram_allowed_users:
             add(Check(WARN, "TELEGRAM_ALLOWED_USERS ცარიელია", "მიწერე ბოტს /id და ჩაწერე ID .env-ში"))
 
+    from .features.notify import channels
+
+    extra = [k for k, on in channels().items() if on]
+    if extra:
+        add(Check(OK, "დამატებითი ალერტების არხები: " + ", ".join(extra) + " (შემოწმება: /notify test)"))
+
     # -- inventory & devices ----------------------------------------------------------------
     inv_path = settings.inventory_path
     if not inv_path.exists():

@@ -50,6 +50,9 @@ class Services:
                 history=history, alerts=AlertLog(state), syslog=syslog, vendors=vendors,
                 newdevices=NewDeviceTracker(state, vendors))
         agent.services = s
+        from . import features
+
+        features.install()
         return s
 
     def inventory(self):

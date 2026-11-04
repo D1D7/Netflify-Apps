@@ -35,6 +35,8 @@ def configure_env() -> None:
         "NETAGENT_SYSLOG_HOST": "127.0.0.1",
         "NETAGENT_SYSLOG_PORT": os.environ.get("NETAGENT_DEMO_SYSLOG_PORT", "5514"),
         "NETAGENT_DEMO": "1",
+        "NETAGENT_HOME_SCAN_INTERVAL": "0",
+        "NETAGENT_SPEEDTEST_INTERVAL": "0",
         "PYTHONUTF8": "1",
     }
     os.environ.update(forced)

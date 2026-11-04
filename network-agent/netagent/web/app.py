@@ -140,7 +140,7 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             "up": sum(r.up for r in results),
             "total": len(results),
             "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice"}),
+            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice", "isp", "site", "escalation"}),
             "alerts": alerts[:30],
             "mutes": services.mutes.active(),
             "usage": {"today": round(today.get("cost", 0.0), 3), "requests": today.get("requests", 0),

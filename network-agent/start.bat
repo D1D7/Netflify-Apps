@@ -12,7 +12,13 @@ echo  ===== NetAgent is starting =====
 echo  App:  http://127.0.0.1:8080   (phone: your Tailscale address)
 echo  Stop: close this window or press Ctrl+C
 echo.
+:run
 ".venv\Scripts\python.exe" -m netagent serve
+if "%errorlevel%"=="75" (
+  echo  Restarting after update...
+  timeout /t 3 /nobreak >nul
+  goto run
+)
 echo.
 echo  NetAgent stopped.
 pause

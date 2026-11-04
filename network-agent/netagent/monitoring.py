@@ -26,12 +26,15 @@ class Alert:
     text: str  # Markdown-ish, same format as chat answers
     devices: list[str] = field(default_factory=list)
     mutable: bool = True  # show "mute" buttons
+    buttons: list = field(default_factory=list)  # extra Button(label, command) under the alert
 
     @property
     def title(self) -> str:
         return {"down": "🔴 მოწყობილობა მიუწვდომელია", "up": "🟢 აღდგა", "watch": "🚨 ალერტი",
                 "config": "📝 Config შეიცვალა", "report": "📊 დღიური რეპორტი",
-                "syslog": "📜 ლოგის ალერტი", "newdevice": "🆕 ახალი მოწყობილობა ქსელში"}.get(self.kind, "NetAgent")
+                "syslog": "📜 ლოგის ალერტი", "newdevice": "🆕 ახალი მოწყობილობა ქსელში",
+                "isp": "🌐 ინტერნეტი", "site": "🌐 საიტი / სერვისი", "escalation": "⏰ შეხსენება",
+                "scheduled": "🗓 განრიგი"}.get(self.kind, "NetAgent")
 
 
 Notifier = Callable[[Alert], Awaitable[None]]
@@ -53,10 +56,15 @@ class MonitoringService:
         self.notifiers.append(fn)
 
     async def emit(self, alert: Alert) -> None:
+        from . import features
+
+        quiet = features.suppress(self.s, alert)  # maintenance window: log it, don't wake anyone
         try:
-            self.s.alerts.add(alert.kind, alert.text, alert.devices)
+            self.s.alerts.add(alert.kind, ("🛠 (სამუშაოები) " if quiet else "") + alert.text, alert.devices)
         except Exception:  # noqa: BLE001
             log.exception("alert log write failed")
+        if quiet:
+            return
         for notify in self.notifiers:
             try:
                 await notify(alert)
@@ -208,6 +216,11 @@ def start_scheduler(monitoring: MonitoringService) -> list[asyncio.Task]:
     hhmm = parse_hhmm(settings.daily_report_time) if settings.daily_report_time else None
     if hhmm:
         tasks.append(asyncio.create_task(_daily(hhmm, monitoring.daily_report)))
+    from . import features
+
+    for name, every, first, fn in features.jobs(monitoring):
+        tasks.append(asyncio.create_task(_every(every, first, fn, name)))
+        log.info("feature job %s: every %ss", name, every)
     log.info("scheduler: monitor=%smin deep=%smin config=%smin report=%s",
              settings.monitor_interval, settings.deep_monitor_interval, settings.config_watch_interval,
              settings.daily_report_time or "off")

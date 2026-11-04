@@ -193,7 +193,9 @@ class NetAgent:
         else:
             messages.append({"role": "user", "content": content_blocks})
 
-        system = _BASE_PROMPT + _CHANNEL_FORMAT.get(channel, "")
+        from . import features
+
+        system = _BASE_PROMPT + _CHANNEL_FORMAT.get(channel, "") + features.prompt_extra(self.services)
         response = None
         for step in range(MAX_STEPS):
             if step and self.usage and self.usage.over_budget():

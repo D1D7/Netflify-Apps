@@ -44,6 +44,12 @@ async def amain() -> None:
             await push.send(alert.title, plain_text(alert.text), tag=alert.kind)
 
     monitoring.add_notifier(push_notify)
+    from . import features
+    from .features import selfmgmt
+
+    for fn in features.notifiers(services):
+        monitoring.add_notifier(fn)
+    selfmgmt.SERVER_RUNNING = True
 
     telegram_app = None
     if settings.telegram_token and os.getenv("NETAGENT_TELEGRAM", "on").lower() not in {"off", "0", "false", "no"}:

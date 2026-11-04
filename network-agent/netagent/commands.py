@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import secrets
 import shlex
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Callable
 
 from .alerts import ALL, format_duration, parse_duration
@@ -19,37 +17,12 @@ from .config import settings
 from .formatting import first_line
 from .health import check_many
 from .inventory import InventoryError
+from .result import Button, CommandError, Result  # noqa: F401 - re-exported for interfaces
 from .security import CommandRejected, validate_command
 from .tools import device as dev
 
 MAX_INLINE_CMD_OUTPUT = 3500
 DEFAULT_MUTE = 3600
-
-
-@dataclass
-class Button:
-    label: str
-    command: str  # command line to run when pressed, e.g. "/mute R1 1h"
-
-
-@dataclass
-class Result:
-    text: str = ""
-    files: list[Path] = field(default_factory=list)
-    image: Path | None = None
-    buttons: list[Button] = field(default_factory=list)
-
-    def as_dict(self) -> dict:
-        return {
-            "text": self.text,
-            "files": [p.name for p in self.files],
-            "image": self.image.name if self.image else None,
-            "buttons": [{"label": b.label, "command": b.command} for b in self.buttons],
-        }
-
-
-class CommandError(Exception):
-    """Wrong usage or a refused command; the message is shown to the user."""
 
 
 def mute_buttons(devices: list[str]) -> list[Button]:

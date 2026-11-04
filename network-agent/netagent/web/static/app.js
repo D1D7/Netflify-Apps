@@ -440,15 +440,52 @@ async function addFiles(list) {
   renderAttachments();
 }
 
+// ---------------------------------------------------------------- voice input
+
+// Speech-to-text in the browser (Chrome on Android/desktop). Georgian first; text lands in the
+// input box so it can be checked before sending.
+function setupVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = $("#mic");
+  if (!SR || !btn) return;
+  btn.hidden = false;
+  let rec = null;
+  btn.addEventListener("click", () => {
+    if (rec) { rec.stop(); return; }
+    const input = $("#input");
+    const base = input.value.trim() ? `${input.value.trimEnd()} ` : "";
+    rec = new SR();
+    rec.lang = "ka-GE";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.onresult = (e) => {
+      let text = "";
+      for (const r of e.results) text += r[0].transcript;
+      input.value = base + text;
+      input.dispatchEvent(new Event("input"));
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") toast("მიკროფონზე წვდომა არ არის დაშვებული");
+      else if (e.error !== "aborted" && e.error !== "no-speech") toast("ხმის ამოცნობა ვერ მოხერხდა");
+    };
+    rec.onend = () => { rec = null; btn.classList.remove("listening"); input.focus(); };
+    btn.classList.add("listening");
+    try { rec.start(); } catch { rec = null; btn.classList.remove("listening"); }
+  });
+}
+
 // ---------------------------------------------------------------- quick actions
 
 const QUICK = [
   ["pulse", "blue", "სტატუსი", "/status"],
+  ["network", "green", "ინტერნეტი", "/isp"],
+  ["search", "violet", "ქსელის სკანი", "/scan"],
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
+  ["help", "amber", "Runbook", "/runbook"],
   ["save", "green", "Backup", "/backup"],
   ["server", "blue", "Inventory", "/devices"],
-  ["help", "amber", "Runbook", "/runbook"],
+  ["sparkle", "violet", "ქვიზი", "/quiz"],
   ["network", "blue", "რუკა", "/map"],
   ["file", "gray", "ლოგები", "/logs"],
   ["note", "violet", "შენიშვნები", "/notes"],
@@ -513,6 +550,7 @@ function sparkline(values) {
 const EVENT_STYLE = {
   down: ["alert", "red"], up: ["check", "green"], watch: ["pulse", "amber"],
   config: ["note", "violet"], report: ["report", "blue"], syslog: ["file", "amber"], newdevice: ["search", "violet"],
+  isp: ["network", "blue"], site: ["network", "violet"], escalation: ["bell", "red"], scheduled: ["report", "gray"],
 };
 
 function renderDevices() {
@@ -726,6 +764,7 @@ async function init() {
   loadTheme();
   load();
   renderQuick();
+  setupVoice();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
   // login
