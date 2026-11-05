@@ -492,6 +492,7 @@ const QUICK = [
   ["pulse", "blue", "სტატუსი", "/status"],
   ["network", "green", "ინტერნეტი", "/isp"],
   ["search", "violet", "ქსელის სკანი", "/scan"],
+  ["file", "blue", "ჟურნალი", "/activity"],
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
   ["help", "amber", "Runbook", "/runbook"],

@@ -172,6 +172,10 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     @app.post("/api/logout")
     async def logout(request: Request):
         body = await _json(request)
+        account = auth.session_user(request.cookies.get(COOKIE))
+        if account is not None:
+            log_event(settings.audit_log_path, user=web_user(account["name"], account["role"]), tool="logout",
+                      args={"from": client_id(request), "everywhere": bool(body.get("everywhere"))}, ok=True)
         if body.get("everywhere"):
             auth.logout_everywhere()
         resp = JSONResponse({"ok": True})

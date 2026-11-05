@@ -56,6 +56,9 @@ def describe(ev: dict) -> str:
     if tool == "login":
         name = who.partition(":")[2] or "admin"
         return f"🔑 **{name}** — შესვლა{' ✅' if ok else ' ❌ (არასწორი)'} · {args.get('from', '')}"
+    if tool == "logout":
+        everywhere = " (ყველა მოწყობილობიდან)" if args.get("everywhere") else ""
+        return f"🚪 **{display_name(who)}** — გასვლა{everywhere} · {args.get('from', '')}"
     if tool == "command":
         return f"⌨️ **{display_name(who)}** — `{str(args.get('line', ''))[:80]}`{mark}"
     if tool in {"cmd", "cli_cmd"}:
@@ -79,7 +82,7 @@ def activity_cmd(s, args, user) -> Result:
     if who:
         events = [e for e in events if who in str(e.get("user", "")).lower()]
     # AI read-only lookups are noisy: keep logins, commands, changes and AI actions that touch devices/data
-    events = [e for e in events if e.get("tool") in {"login", "command", "cmd", "cli_cmd"}
+    events = [e for e in events if e.get("tool") in {"login", "logout", "command", "cmd", "cli_cmd"}
               or str(e.get("tool", "")).startswith("config_change") or e.get("device_access")
               or e.get("tool") in AI_TOOL_LABELS]
     if not events:
