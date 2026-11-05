@@ -20,6 +20,7 @@ from pathlib import Path
 SESSION_DAYS = 30
 LOGIN_WINDOW = 15 * 60
 LOGIN_MAX_FAILURES = 5
+ACTIVE = None                   # the running server's WebAuth (set by create_app), for /sessions and /kick
 OWNER = "admin"                 # the original single account (password from web-setup / .env)
 ROLES = ("admin", "viewer")     # viewer: sees everything, changes nothing
 USERNAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{1,31}")
@@ -79,6 +80,18 @@ def check_password(password: str, record: dict) -> bool:
     return hmac.compare_digest(digest, _unb64(record["hash"]))
 
 
+def device_label(ua: str) -> str:
+    """'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 ...) ... Safari' -> 'iPhone · Safari'."""
+    ua = ua or ""
+    system = next((name for key, name in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+                                          ("Windows", "Windows"), ("Macintosh", "Mac"), ("Linux", "Linux"))
+                   if key in ua), "")
+    browser = next((name for key, name in (("Edg/", "Edge"), ("OPR/", "Opera"), ("SamsungBrowser", "Samsung Internet"),
+                                           ("CriOS", "Chrome"), ("Chrome/", "Chrome"), ("FxiOS", "Firefox"),
+                                           ("Firefox/", "Firefox"), ("Safari/", "Safari")) if key in ua), "")
+    return " · ".join(x for x in (system, browser) if x) or "უცნობი მოწყობილობა"
+
+
 class _Dummy(dict):
     """Hash record for unknown user names (created on first use), so a wrong name costs the same time."""
 
@@ -101,6 +114,7 @@ class WebAuth:
         self.env_password = env_password
         self._lock = threading.Lock()
         self._failures: dict[str, list[float]] = {}
+        self._seen: dict[str, float] = {}  # session id -> last request (memory only: no disk write per request)
         self._mtime = 0.0
         self._data = self._load()
 
@@ -179,6 +193,8 @@ class WebAuth:
         with self._lock:
             removed = self._users().pop(name, None) is not None
             if removed:
+                for sid in [k for k, s in self._sessions().items() if s.get("u") == name]:
+                    self._sessions().pop(sid)
                 self._save()
             return removed
 
@@ -216,7 +232,63 @@ class WebAuth:
     def logout_everywhere(self) -> None:
         with self._lock:
             self._rotate_sessions()
+            self._data["sessions"] = {}
             self._save()
+
+    # -- server-side session list: who is logged in where; kick one person ----------
+    def _sessions(self) -> dict[str, dict]:
+        return self._data.setdefault("sessions", {})
+
+    def list_sessions(self) -> list[dict]:
+        self._refresh()
+        now = time.time()
+        out = []
+        for sid, s in self._sessions().items():
+            if s.get("exp", 0) > now:
+                out.append({"sid": sid, **s, "last_seen": max(self._seen.get(sid, 0), s.get("created", 0))})
+        return sorted(out, key=lambda s: s["last_seen"], reverse=True)
+
+    def logout(self, token: str | None) -> None:
+        """Ends this one session on the server too (not only the cookie)."""
+        sid = self._token_sid(token)
+        if sid:
+            self.revoke(sid)
+
+    def revoke(self, who: str) -> int:
+        """Kick by user name (all of their sessions) or by session id (prefix). Returns how many ended."""
+        self._refresh()
+        who = who.strip().lower()
+        with self._lock:
+            sessions = self._sessions()
+            gone = [sid for sid, s in sessions.items() if s.get("u", OWNER) == who or (len(who) >= 4 and sid.startswith(who))]
+            for sid in gone:
+                sessions.pop(sid, None)
+                self._seen.pop(sid, None)
+            if gone:
+                self._save()
+        return len(gone)
+
+    def note_login(self, user: str, ip: str) -> str:
+        """Remember where an account logs in from. Returns "first", "new" (new device/IP) or ""."""
+        with self._lock:
+            known = self._data.setdefault("known_logins", {}).setdefault(user, [])
+            status = "first" if not known else ("new" if ip not in known else "")
+            if ip not in known:
+                known.append(ip)
+                del known[:-20]
+                self._save()
+        return status
+
+    def failures(self, client: str) -> int:
+        now = time.time()
+        return sum(1 for t in self._failures.get(client, []) if now - t < LOGIN_WINDOW)
+
+    @staticmethod
+    def _token_sid(token: str | None) -> str:
+        try:
+            return str(json.loads(_unb64(token.rsplit(".", 1)[0])).get("n", ""))
+        except (AttributeError, ValueError, TypeError):
+            return ""
 
     # -- login ---------------------------------------------------------------
     def _too_many_failures(self, client: str) -> bool:
@@ -225,7 +297,8 @@ class WebAuth:
         self._failures[client] = recent
         return len(recent) >= LOGIN_MAX_FAILURES
 
-    def login(self, password: str, totp: str, client: str, username: str = "") -> tuple[str | None, str]:
+    def login(self, password: str, totp: str, client: str, username: str = "",
+              meta: dict | None = None) -> tuple[str | None, str]:
         """Returns (session_token, error_message). Empty username or "admin" = the original account."""
         self._refresh()
         if not self.configured:
@@ -249,19 +322,29 @@ class WebAuth:
             self._failures.setdefault(client, []).append(time.time())
             return None, "არასწორი მომხმარებელი, პაროლი ან კოდი"
         self._failures.pop(client, None)
-        return self.issue_session(user=name), ""
+        return self.issue_session(user=name, meta={"ip": client, **(meta or {})}), ""
 
-    def issue_session(self, days: int = SESSION_DAYS, user: str = OWNER) -> str:
+    def issue_session(self, days: int = SESSION_DAYS, user: str = OWNER, meta: dict | None = None) -> str:
         key = self._session_key()  # first: creating the key bumps the generation the token must carry
-        body = {"exp": int(time.time()) + days * 86400, "gen": self._data.get("generation", 0), "n": secrets.token_hex(8)}
+        now = int(time.time())
+        sid = secrets.token_hex(8)
+        body = {"exp": now + days * 86400, "gen": self._data.get("generation", 0), "n": sid}
         if user != OWNER:
             body.update(u=user, ug=int(self._users().get(user, {}).get("gen", 0)))
+        with self._lock:
+            sessions = self._sessions()
+            for old in [k for k, s in sessions.items() if s.get("exp", 0) <= now]:
+                sessions.pop(old)  # expired
+            sessions[sid] = {"u": user, "created": now, "exp": body["exp"],
+                             "ip": str((meta or {}).get("ip", ""))[:64], "ua": str((meta or {}).get("ua", ""))[:200]}
+            self._save()
         payload = _b64(json.dumps(body).encode())
         sig = _b64(hmac.new(key, payload.encode(), hashlib.sha256).digest())
         return f"{payload}.{sig}"
 
     def session_user(self, token: str | None) -> dict | None:
-        """{"name", "role"} for a valid session, else None. A deleted user or a changed password ends its sessions."""
+        """{"name", "role", "sid"} for a valid session, else None. Logout, /kick, a deleted user or a changed
+        password end a session."""
         if not token or "." not in token:
             return None
         self._refresh()
@@ -275,13 +358,17 @@ class WebAuth:
             return None
         if not isinstance(data, dict) or data.get("exp", 0) <= time.time() or data.get("gen") != self._data.get("generation", 0):
             return None
+        sid = str(data.get("n", ""))
+        if sid not in self._sessions():
+            return None  # logged out / kicked (or issued before the session list existed)
+        self._seen[sid] = time.time()
         name = data.get("u") or OWNER
         if name == OWNER:
-            return {"name": OWNER, "role": "admin"}
+            return {"name": OWNER, "role": "admin", "sid": sid}
         user = self._users().get(name)
         if user is None or int(user.get("gen", 0)) != data.get("ug"):
             return None
-        return {"name": name, "role": user.get("role", "viewer")}
+        return {"name": name, "role": user.get("role", "viewer"), "sid": sid}
 
     def verify_session(self, token: str | None) -> bool:
         return self.session_user(token) is not None

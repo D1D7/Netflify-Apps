@@ -20,7 +20,8 @@ from ..permissions import web_user
 from ..content import UploadError, build_content
 from ..formatting import describe_tool
 from ..health import check_many
-from .auth import WebAuth
+from . import auth as auth_module
+from .auth import LOGIN_MAX_FAILURES, WebAuth, device_label
 from .push import PushSender
 
 log = logging.getLogger("netagent.web")
@@ -66,11 +67,25 @@ def isp_overview(services) -> dict | None:
 
 def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> FastAPI:
     app = FastAPI(title="NetAgent", docs_url=None, redoc_url=None, openapi_url=None)
+    auth_module.ACTIVE = auth  # /sessions and /kick use the running server's session list
 
     def client_id(request: Request) -> str:
         # Not X-Forwarded-For: its first entry is whatever the client wrote, so a new fake IP per try would
         # dodge the login lockout. uvicorn already sets client.host from the trusted local proxy (Tailscale serve).
         return request.client.host if request.client else "?"
+
+    async def security_alert(text: str) -> None:
+        """Push/Telegram notification about logins (never breaks the login itself)."""
+        if monitoring is None:
+            return
+        try:
+            from ..monitoring import Alert
+            from ..result import Button
+
+            await monitoring.emit(Alert("security", text, [], mutable=False,
+                                        buttons=[Button("👥 სესიები", "/sessions"), Button("📜 ჟურნალი", "/activity")]))
+        except Exception:  # noqa: BLE001
+            log.exception("security alert failed")
 
     def api_token_user(request: Request) -> str | None:
         """Another NetAgent (see /remote) calls with "Authorization: Bearer <NETAGENT_API_TOKEN>"."""
@@ -157,13 +172,24 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         if not isinstance(body, dict):
             body = {}
         username = str(body.get("username", "")).strip().lower()[:32]
+        ip, ua = client_id(request), request.headers.get("user-agent", "")
         token, error = await asyncio.to_thread(
-            auth.login, str(body.get("password", "")), str(body.get("totp", "")), client_id(request), username)
-        log_event(settings.audit_log_path, user=f"login:{username or 'admin'}", tool="login",
-                  args={"from": client_id(request)}, ok=bool(token))
+            auth.login, str(body.get("password", "")), str(body.get("totp", "")), ip, username, {"ua": ua})
+        name = username or "admin"
+        log_event(settings.audit_log_path, user=f"login:{name}", tool="login",
+                  args={"from": ip, "device": device_label(ua)}, ok=bool(token))
         if not token:
+            fails = auth.failures(ip)
+            if fails in (3, LOGIN_MAX_FAILURES):  # once at 3, once at the lockout
+                locked = fails >= LOGIN_MAX_FAILURES
+                await security_alert(f"⚠️ **{fails} წარუმატებელი შესვლა** ({name}) · {device_label(ua)} · {ip}"
+                                     + ("\n🔒 ეს მისამართი 15 წუთით დაიბლოკა." if locked else ""))
             status = 429 if "15 წუთში" in error else 401
             return JSONResponse({"error": error}, status_code=status)
+        seen = await asyncio.to_thread(auth.note_login, name, ip)
+        if seen:
+            what = "პირველად შევიდა" if seen == "first" else "შევიდა **ახალი მოწყობილობიდან**"
+            await security_alert(f"🔐 **{name}** {what}: {device_label(ua)} · {ip}\nთუ ეს შენ/თქვენ არ ხართ: /kick {name}")
         resp = JSONResponse({"ok": True})
         secure = request.url.scheme == "https"
         resp.set_cookie(COOKIE, token, max_age=30 * 86400, httponly=True, samesite="strict", secure=secure, path="/")
@@ -178,6 +204,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
                       args={"from": client_id(request), "everywhere": bool(body.get("everywhere"))}, ok=True)
         if body.get("everywhere"):
             auth.logout_everywhere()
+        else:
+            auth.logout(request.cookies.get(COOKIE))  # the old cookie stops working on the server too
         resp = JSONResponse({"ok": True})
         resp.delete_cookie(COOKIE, path="/")
         return resp
@@ -204,7 +232,7 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             "up": sum(r.up for r in results),
             "total": len(results),
             "checked_at": datetime.now().isoformat(timespec="seconds"),
-            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice", "isp", "site", "escalation"}),
+            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice", "isp", "site", "escalation", "security"}),
             "alerts": alerts[:30],
             "mutes": services.mutes.active(),
             "usage": {"today": round(today.get("cost", 0.0), 3), "requests": today.get("requests", 0),

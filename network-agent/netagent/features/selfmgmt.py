@@ -129,7 +129,8 @@ def make_backup(dest_dir: Path | None = None) -> Path:
                     import json
 
                     data = json.loads(f.read_text(encoding="utf-8"))
-                    data.pop("session_key", None)
+                    for key in ("session_key", "sessions", "known_logins"):
+                        data.pop(key, None)
                     z.writestr(name, json.dumps(data, indent=1))
                     continue
                 z.write(f, name)

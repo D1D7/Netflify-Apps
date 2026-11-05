@@ -55,7 +55,8 @@ def describe(ev: dict) -> str:
     mark = "" if ok else " ❌"
     if tool == "login":
         name = who.partition(":")[2] or "admin"
-        return f"🔑 **{name}** — შესვლა{' ✅' if ok else ' ❌ (არასწორი)'} · {args.get('from', '')}"
+        device = f"{args['device']} · " if args.get("device") else ""
+        return f"🔑 **{name}** — შესვლა{' ✅' if ok else ' ❌ (არასწორი)'} · {device}{args.get('from', '')}"
     if tool == "logout":
         everywhere = " (ყველა მოწყობილობიდან)" if args.get("everywhere") else ""
         return f"🚪 **{display_name(who)}** — გასვლა{everywhere} · {args.get('from', '')}"
@@ -107,6 +108,52 @@ def users_cmd(s, args, user) -> Result:
     return Result("\n".join(lines), buttons=[Button("📜 ჟურნალი", "/activity")])
 
 
-COMMANDS = {"activity": activity_cmd, "users": users_cmd}
-HELP = ["/activity — ვინ რა გააკეთა (შესვლები, ბრძანებები, AI) · /activity gio · /users — მომხმარებლები"]
-BOT_COMMANDS = [("activity", "ვინ რა გააკეთა")]
+def _auth():
+    from ..web import auth as auth_module
+
+    return auth_module.ACTIVE or auth_module.WebAuth(settings.data_dir / "web_auth.json")
+
+
+def _ago(ts: float) -> str:
+    minutes = int((datetime.now().timestamp() - ts) // 60)
+    if minutes < 2:
+        return "ახლა"
+    if minutes < 60:
+        return f"{minutes} წთ წინ"
+    if minutes < 48 * 60:
+        return f"{minutes // 60} სთ წინ"
+    return f"{minutes // 1440} დღის წინ"
+
+
+def sessions_cmd(s, args, user) -> Result:
+    from ..web.auth import device_label
+
+    sessions = _auth().list_sessions()
+    if not sessions:
+        return Result("აქტიური სესია არ არის (ან სერვერი ახლახან გადაიტვირთა და ჯერ არავინ შესულა)")
+    lines = [f"👥 **ვინ არის შესული** — {len(sessions)} სესია"]
+    for x in sessions:
+        active = "🟢" if datetime.now().timestamp() - x["last_seen"] < 15 * 60 else "⚪"
+        since = datetime.fromtimestamp(x.get("created", 0)).strftime("%m-%d %H:%M")
+        lines.append(f"{active} **{x.get('u', 'admin')}** — {device_label(x.get('ua', ''))} · {x.get('ip', '')} · "
+                     f"ბოლოს: {_ago(x['last_seen'])} · შევიდა {since} · `{x['sid'][:6]}`")
+    lines.append("\n🟢 ბოლო 15 წუთში აქტიური · გამოგდება: `/kick gio` (ყველა მისი სესია) ან `/kick <კოდი>`")
+    people = sorted({x.get("u", "admin") for x in sessions} - {"admin"})
+    return Result("\n".join(lines), buttons=[Button(f"🚫 გამოაგდე {p}", f"/kick {p}") for p in people][:4]
+                  + [Button("🔄 განახლება", "/sessions")])
+
+
+def kick_cmd(s, args, user) -> Result:
+    if not args:
+        raise CommandError("გამოყენება: /kick gio  ან  /kick <სესიის კოდი /sessions-დან>")
+    n = _auth().revoke(args[0])
+    if not n:
+        raise CommandError(f"'{args[0]}' — ასეთი აქტიური სესია ვერ ვიპოვე (/sessions)")
+    note = "\nℹ️ თავიდან შესვლა მაინც შეუძლია პაროლით. სამუდამოდ: users.bat → წაშლა." if args[0].lower() != "admin" else ""
+    return Result(f"🚫 გამოგდებულია: {args[0]} — {n} სესია დაიხურა.{note}", buttons=[Button("👥 სესიები", "/sessions")])
+
+
+COMMANDS = {"activity": activity_cmd, "users": users_cmd, "sessions": sessions_cmd, "kick": kick_cmd}
+HELP = ["/activity — ვინ რა გააკეთა (შესვლები, ბრძანებები, AI) · /activity gio · /users — მომხმარებლები",
+        "/sessions — ვინ არის ახლა შესული (მოწყობილობა, IP) · /kick gio — გამოგდება"]
+BOT_COMMANDS = [("activity", "ვინ რა გააკეთა"), ("sessions", "ვინ არის შესული")]

@@ -148,12 +148,12 @@ def test_multi_user_login_and_roles(tmp_path):
     a = WebAuth(tmp_path / "auth.json")
     a.set_password("owner-password-1")
     owner, _ = a.login("owner-password-1", "", "c")
-    assert a.session_user(owner) == {"name": "admin", "role": "admin"}
+    assert {k: a.session_user(owner)[k] for k in ("name", "role")} == {"name": "admin", "role": "admin"}
     a.add_user("gio", "gio-password-1", "viewer")
     secret = a.enable_user_totp("gio")
     assert a.login("gio-password-1", "", "c2", "gio")[0] is None
     token, _ = a.login("gio-password-1", totp_code(secret), "c3", "gio")
-    assert a.session_user(token) == {"name": "gio", "role": "viewer"}
+    assert {k: a.session_user(token)[k] for k in ("name", "role")} == {"name": "gio", "role": "viewer"}
     assert a.login("owner-password-1", "", "c4", "gio")[0] is None
     a.delete_user("gio")
     assert a.session_user(token) is None and a.verify_session(owner)
@@ -208,3 +208,34 @@ def test_interface_name_parsing():
     ios = "Interface IP-Address OK? Method Status Protocol\nGigabitEthernet0/0 10.0.0.1 YES NVRAM up up\nVlan10 unassigned YES unset up up\n"
     assert parse_names(ios, "first") == ["GigabitEthernet0/0", "Vlan10"]
     assert parse_names(' 0 R name="ether1" type="ether"\n 1 name=bridge1\n', "ros") == ["ether1", "bridge1"]
+
+
+# -- sessions, kick, login alerts, who is home ------------------------------------------------------
+def test_sessions_list_kick_and_real_logout(tmp_path):
+    from netagent.web.auth import WebAuth, device_label
+
+    a = WebAuth(tmp_path / "a.json")
+    a.set_password("owner-password-1")
+    a.add_user("gio", "gio-password-1", "viewer")
+    owner, _ = a.login("owner-password-1", "", "1.1.1.1")
+    gio, _ = a.login("gio-password-1", "", "100.75.142.83", "gio",
+                     {"ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1) Version/18 Mobile Safari/604.1"})
+    assert sorted(s["u"] for s in a.list_sessions()) == ["admin", "gio"]
+    assert device_label(next(s["ua"] for s in a.list_sessions() if s["u"] == "gio")) == "iPhone · Safari"
+    assert a.revoke("gio") == 1 and a.session_user(gio) is None and a.verify_session(owner)
+    a.logout(owner)
+    assert not a.verify_session(owner)  # logout ends the session on the server, not only the cookie
+    assert a.note_login("gio", "100.75.142.83") == "first"
+    assert a.note_login("gio", "100.75.142.83") == ""
+    assert a.note_login("gio", "100.75.1.1") == "new"
+
+
+def test_presence_arrive_and_leave_with_grace():
+    from netagent.features import presence
+
+    st, mac = _State(), "22:36:e0:cb:d1:48"
+    assert presence.update(st, {mac: True}, now=1000) == []          # first look: silent
+    assert presence.update(st, {mac: False}, now=1600) == []         # 10 min: Wi-Fi nap, not "left"
+    assert [e["event"] for e in presence.update(st, {mac: False}, now=1901)] == ["left"]
+    assert [e["event"] for e in presence.update(st, {mac: True}, now=5000)] == ["arrived"]
+    assert [e["event"] for e in st["presence_log"]] == ["left", "arrived"]
