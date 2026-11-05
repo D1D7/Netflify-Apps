@@ -200,19 +200,75 @@ def scan(network: str = "", vendors=None, ports: dict[int, str] | None = None, t
             "scanned_at": datetime.now().isoformat(timespec="seconds")}
 
 
+INSECURE_PORTS = {23, 21, 5900}  # send passwords in clear text / weak auth: worth a warning on any device
+ROUTER_ONLY_PORTS = {445, 3389}  # normal on a Windows PC or NAS, but should not be open on the router
+
+
+def _vendor_label(e: dict) -> str:
+    """The random-MAC note once, short: the device type often already says 'privacy MAC'."""
+    from ..macvendor import RANDOM_LABEL
+
+    vendor = e.get("vendor") or ""
+    if vendor == RANDOM_LABEL:
+        return "" if "privacy MAC" in (e.get("kind") or "") else "privacy MAC"
+    return vendor
+
+
+def risky_ports(e: dict, gateway: str | None) -> list[int]:
+    if e.get("self"):
+        return []
+    bad = INSECURE_PORTS | (ROUTER_ONLY_PORTS if e["ip"] == gateway else set())
+    return [p for p in e["ports"] if p in bad]
+
+
+NAMES_KEY = "device_names"  # {canonical MAC or "ip:<ip>": "დედას ტელეფონი"}
+
+
+def name_key(ip: str = "", mac: str = "") -> str:
+    m = canonical_mac(mac) if mac else ""
+    return m or f"ip:{ip}"
+
+
+def device_names(state) -> dict[str, str]:
+    return state.get(NAMES_KEY) or {}
+
+
+def apply_names(state, res: dict, known: set | None = None) -> dict:
+    """Add the user's names (and 🆕 for MACs never seen before) to scan entries. Names follow the MAC, so a
+    phone keeps its name when its IP changes; devices without a MAC are named by IP."""
+    names = device_names(state)
+    for e in res.get("devices", []):
+        label = names.get(name_key(mac=e.get("mac", ""))) if e.get("mac") else None
+        e["label"] = label or names.get(f"ip:{e['ip']}", "")
+        e["new"] = bool(known) and bool(e.get("mac")) and e["mac"] not in known and not e.get("self")
+    return res
+
+
 def format_scan(res: dict, ports: dict[int, str] | None = None) -> str:
     ports = ports or {**PORTS, **EXTRA_PORTS}
     lines = [f"🏠 **ქსელი {res['network']}** — {len(res['devices'])} მოწყობილობა"]
+    unnamed = []
     for e in res["devices"]:
-        label = " · ".join(x for x in (e.get("kind"), e.get("vendor"), e.get("name")) if x)
+        # the user's name first, then what the scan found — IP, type and the privacy-MAC note always stay visible
+        label = " · ".join(x for x in (f"🏷️ **{e['label']}**" if e.get("label") else "", e.get("kind"),
+                                         _vendor_label(e), e.get("name")) if x)
         svc = ", ".join(ports.get(p, str(p)) for p in e["ports"])
-        lines.append(f"• **{e['ip']}**" + (f" — {label}" if label else "") + (f"\n  `{e['mac']}`" if e["mac"] else "")
-                     + (f" · 🔓 {svc}" if svc else ""))
-    risky = [e for e in res["devices"] if set(e["ports"]) & {23, 3389, 445, 5900, 21} and not e.get("self")]
+        lines.append(("🆕 " if e.get("new") else "• ") + f"**{e['ip']}**" + (f" — {label}" if label else "")
+                     + (f"\n  `{e['mac']}`" if e["mac"] else "") + (f" · 🔓 {svc}" if svc else ""))
+        if not e.get("label") and not e.get("self") and e["ip"] != res.get("gateway"):
+            unnamed.append(e["ip"])
+    gateway = res.get("gateway")
+    risky = [(e, risky_ports(e, gateway)) for e in res["devices"]]
+    risky = [(e, ps) for e, ps in risky if ps]
     if risky:
-        lines.append("\n⚠️ ყურადღება: " + ", ".join(
-            f"{e['ip']} ({', '.join(ports[p] for p in e['ports'] if p in {23, 3389, 445, 5900, 21})})" for e in risky)
-            + " — ეს სერვისები ინტერნეტში არ უნდა იყოს გახსნილი")
+        lines.append("\n⚠️ დაუცველი სერვისები: " + ", ".join(
+            f"{e['ip']} ({', '.join(ports.get(p, str(p)) for p in ps)})" for e, ps in risky)
+            + " — Telnet/FTP/VNC პაროლს დაუშიფრავად გადასცემს. თუ არ იყენებ, გამორთე მოწყობილობის "
+              "პარამეტრებში (როუტერზე — Management/Security). ინტერნეტიდან კი არასდროს უნდა იყოს ღია.")
+    if any(e.get("new") for e in res["devices"]):
+        lines.append("🆕 — ახალი მოწყობილობა (აქამდე არ გვინახავს)")
+    if unnamed:
+        lines.append(f"\n💡 სახელის დარქმევა: `/name {unnamed[0]} დედას ტელეფონი`")
     return "\n".join(lines)
 
 
@@ -235,15 +291,22 @@ def scan_cmd(s, args, user) -> Result:
         return Result(f"🔍 **{r['ip']}**" + (f" — {who}" if who else "") + f"\n{svc}")
     res = scan(args[0] if args else "", s.vendors)
     s.state.set("home_last_scan", res)
-    HomeTracker(s.state, s.vendors).process({SITE: [(e["ip"], e["mac"]) for e in res["devices"] if e["mac"]]})
-    return Result(format_scan(res), buttons=[Button("🔄 თავიდან", "/scan")])
+    tracker = HomeTracker(s.state, s.vendors)
+    known = set(tracker.known())
+    tracker.process({SITE: [(e["ip"], e["mac"]) for e in res["devices"] if e["mac"]]})
+    apply_names(s.state, res, known)
+    return Result(format_scan(res), buttons=[Button("🔄 თავიდან", "/scan"), Button("🏷️ სახელები", "/names"),
+                                             Button("🛡️ როუტერის შემოწმება", "/routercheck")])
 
 
 def _tool_scan(ctx, network: str = "", host: str = "") -> dict:
     s = ctx.services
     vendors = s.vendors if s else None
     try:
-        return scan_host(host, vendors) if host else scan(network, vendors)
+        if host:
+            return scan_host(host, vendors)
+        res = scan(network, vendors)
+        return apply_names(s.state, res) if s else res  # "label" = the name the user gave the device
     except CommandError as exc:
         raise ValueError(str(exc)) from None
 

@@ -25,6 +25,11 @@ log = logging.getLogger("netagent.syslog")
 SEVERITY = ["emerg", "alert", "crit", "err", "warning", "notice", "info", "debug"]
 KEEP_DAYS = 14
 ALERT_COOLDOWN = 600          # seconds between alerts of the same kind for the same device
+# Flood guards: UDP syslog has no login, anyone on the LAN (or a spoofed source) can send it.
+MAX_DAY_BYTES = 100_000_000   # stop writing today's file at 100 MB
+MAX_RATE = 200                # datagrams per second (burst up to 5x)
+MAX_ALERTS = 20               # syslog alerts per ALERT_WINDOW across all senders
+ALERT_WINDOW = 600
 LOGIN_FAIL_THRESHOLD = 5      # failed logins ...
 LOGIN_FAIL_WINDOW = 600       # ... within this many seconds
 
@@ -89,6 +94,7 @@ class SyslogStore:
         self.root = root
         self._lock = threading.Lock()
         self._last_prune: date | None = None
+        self._full_day: date | None = None
 
     def _file(self, d: date) -> Path:
         return self.root / f"{d.isoformat()}.jsonl"
@@ -97,7 +103,16 @@ class SyslogStore:
         today = date.today()
         with self._lock:
             self.root.mkdir(parents=True, exist_ok=True)
-            with self._file(today).open("a", encoding="utf-8") as fh:
+            path = self._file(today)
+            try:
+                if path.stat().st_size >= MAX_DAY_BYTES:  # disk guard: a flood must not fill the disk
+                    if self._full_day != today:
+                        self._full_day = today
+                        log.warning("syslog: today's log reached %d MB, dropping until midnight", MAX_DAY_BYTES // 1_000_000)
+                    return
+            except FileNotFoundError:
+                pass
+            with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry.as_dict(), ensure_ascii=False) + "\n")
             if self._last_prune != today:
                 self._last_prune = today
@@ -181,8 +196,33 @@ class SyslogServer(asyncio.DatagramProtocol):
         self.on_alert = on_alert
         self.analyzer = SyslogAnalyzer()
         self.received = 0
+        self.dropped = 0
+        self._tokens = float(MAX_RATE * 5)
+        self._refill = time.monotonic()
+        self._alerts: deque = deque()
+
+    def _take_token(self) -> bool:
+        now = time.monotonic()
+        self._tokens = min(MAX_RATE * 5, self._tokens + (now - self._refill) * MAX_RATE)
+        self._refill = now
+        if self._tokens < 1:
+            return False
+        self._tokens -= 1
+        return True
+
+    def _alert_allowed(self) -> bool:
+        now = time.monotonic()
+        while self._alerts and now - self._alerts[0] > ALERT_WINDOW:
+            self._alerts.popleft()
+        if len(self._alerts) >= MAX_ALERTS:
+            return False
+        self._alerts.append(now)
+        return True
 
     def datagram_received(self, data: bytes, addr) -> None:
+        if not self._take_token():
+            self.dropped += 1
+            return
         if len(data) > 8192:
             data = data[:8192]
         host = addr[0]
@@ -194,7 +234,7 @@ class SyslogServer(asyncio.DatagramProtocol):
         except OSError:
             log.exception("syslog write failed")
         alert = self.analyzer.analyze(entry)
-        if alert:
+        if alert and self._alert_allowed():
             self.on_alert(entry.device, alert)
 
 

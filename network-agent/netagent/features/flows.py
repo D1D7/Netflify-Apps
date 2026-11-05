@@ -56,6 +56,9 @@ def parse_v5(data: bytes) -> list[dict]:
     return out
 
 
+MAX_TEMPLATES = 1000  # real exporters send a handful; spoofed senders must not grow this forever
+
+
 class TemplateCache:
     def __init__(self) -> None:
         self.t: dict[tuple, list[tuple[int, int]]] = {}
@@ -100,8 +103,9 @@ class TemplateCache:
                     p += 4
                     ftype = -1
                 fields.append((ftype, flen))
-            if tid >= 256:
-                self.t[(exporter, domain, tid)] = fields
+            key = (exporter, domain, tid)
+            if tid >= 256 and (key in self.t or len(self.t) < MAX_TEMPLATES):
+                self.t[key] = fields
 
     @staticmethod
     def _records(body: bytes, fmt: list[tuple[int, int]]) -> list[dict]:
@@ -138,18 +142,47 @@ def is_local(ip: str) -> bool:
     return a.is_private or (a.version == 4 and a in _CGNAT)
 
 
+MAX_KEYS = 1_000_000  # memory guard: anyone on the LAN can send (spoofed) flow packets with random IPs
+
+
+class _Budget:
+    def __init__(self, limit: int) -> None:
+        self.limit, self.total = limit, 0
+
+
+class _CappedCounter(Counter):
+    """Counter that stops taking NEW keys when the shared budget is spent (existing keys still count up)."""
+
+    def __init__(self, budget: _Budget) -> None:
+        super().__init__()
+        self._budget = budget
+
+    def __setitem__(self, key, value) -> None:
+        if key not in self:
+            if self._budget.total >= self._budget.limit:
+                return
+            self._budget.total += 1
+        super().__setitem__(key, value)
+
+
 class FlowStats:
     """Per-minute counters for the last 24 hours (in memory)."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_keys: int = MAX_KEYS) -> None:
         self.lock = threading.Lock()
         self.minutes: dict[int, dict[str, Counter]] = {}
         self.exporters: Counter = Counter()
+        self.budget = _Budget(max_keys)
 
     def add(self, flows: list[dict], exporter: str = "", now: float | None = None) -> None:
         minute = int((now or time.time()) // 60)
         with self.lock:
-            b = self.minutes.setdefault(minute, defaultdict(Counter))
+            # drop data older than 24 h first, so its memory budget is free for the new minute
+            for old in [m for m in self.minutes if m < minute - 24 * 60]:
+                self.budget.total -= sum(len(c) for c in self.minutes.pop(old).values())
+            b = self.minutes.get(minute)
+            if b is None:
+                b = self.minutes[minute] = defaultdict(lambda: _CappedCounter(self.budget))
             for f in flows:
                 n = f.get("bytes", 0)
                 src, dst = f["src"], f["dst"]
@@ -172,8 +205,6 @@ class FlowStats:
                 if ls or ld:
                     b["pair"][f"{dst if ld and not ls else src}>{src if ld and not ls else dst}"] += n
             self.exporters[exporter] += len(flows)
-            for old in [m for m in self.minutes if m < minute - 24 * 60]:
-                del self.minutes[old]
 
     def window(self, minutes: int, now: float | None = None) -> dict[str, Counter]:
         end = int((now or time.time()) // 60)

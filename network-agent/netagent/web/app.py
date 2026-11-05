@@ -14,7 +14,9 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import commands
+from ..audit import log_event
 from ..config import settings
+from ..permissions import web_user
 from ..content import UploadError, build_content
 from ..formatting import describe_tool
 from ..health import check_many
@@ -30,6 +32,7 @@ MAX_FILES = 5
 SPARK_POINTS = 24  # 2 hours at the default 5-minute monitoring interval
 _SAFE_FILE = re.compile(r"^[\w.-]+$")
 PUBLIC_API = {"/api/login", "/api/me"}
+TOKEN_API = {"/api/command", "/api/overview"}  # reachable with NETAGENT_API_TOKEN (another NetAgent, /remote)
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
@@ -65,8 +68,21 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     app = FastAPI(title="NetAgent", docs_url=None, redoc_url=None, openapi_url=None)
 
     def client_id(request: Request) -> str:
-        return request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (
-            request.client.host if request.client else "?")
+        # Not X-Forwarded-For: its first entry is whatever the client wrote, so a new fake IP per try would
+        # dodge the login lockout. uvicorn already sets client.host from the trusted local proxy (Tailscale serve).
+        return request.client.host if request.client else "?"
+
+    def api_token_user(request: Request) -> str | None:
+        """Another NetAgent (see /remote) calls with "Authorization: Bearer <NETAGENT_API_TOKEN>"."""
+        import hmac as _hmac
+
+        token = os.getenv("NETAGENT_API_TOKEN", "").strip()
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if len(token) < 24 or not given or not _hmac.compare_digest(given, token):
+            return None
+        # view-only unless the owner of THIS NetAgent sets NETAGENT_API_ROLE=admin in its .env
+        admin = os.getenv("NETAGENT_API_ROLE", "viewer").strip().lower() == "admin"
+        return f"{'app' if admin else 'view'}:remote-{client_id(request)}"
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -75,8 +91,14 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             # CSRF: browsers cannot add custom headers cross-site without a CORS preflight we never allow.
             if request.method not in ("GET", "HEAD") and request.headers.get("x-netagent") != "1":
                 return JSONResponse({"error": "missing X-NetAgent header"}, status_code=403)
-            if path not in PUBLIC_API and not auth.verify_session(request.cookies.get(COOKIE)):
-                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            if path not in PUBLIC_API:
+                account = auth.session_user(request.cookies.get(COOKIE))
+                if account is not None:
+                    request.state.who = web_user(account["name"], account["role"])
+                elif path in TOKEN_API and (remote := api_token_user(request)):
+                    request.state.who = remote
+                else:
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
         response = await call_next(request)
         for k, v in SECURITY_HEADERS.items():
             response.headers.setdefault(k, v)
@@ -121,8 +143,10 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     # -- auth --------------------------------------------------------------------
     @app.get("/api/me")
     async def me(request: Request):
-        return {"authenticated": auth.verify_session(request.cookies.get(COOKIE)),
-                "configured": auth.configured, "totp": auth.totp_enabled}
+        account = auth.session_user(request.cookies.get(COOKIE))
+        return {"authenticated": account is not None, "configured": auth.configured, "totp": auth.totp_enabled,
+                "user": account["name"] if account else None, "role": account["role"] if account else None,
+                "multiuser": len(auth.list_users()) > 1}
 
     @app.post("/api/login")
     async def login(request: Request):
@@ -130,8 +154,13 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             body = await request.json()
         except json.JSONDecodeError:
             body = {}
+        if not isinstance(body, dict):
+            body = {}
+        username = str(body.get("username", "")).strip().lower()[:32]
         token, error = await asyncio.to_thread(
-            auth.login, str(body.get("password", "")), str(body.get("totp", "")), client_id(request))
+            auth.login, str(body.get("password", "")), str(body.get("totp", "")), client_id(request), username)
+        log_event(settings.audit_log_path, user=f"login:{username or 'admin'}", tool="login",
+                  args={"from": client_id(request)}, ok=bool(token))
         if not token:
             status = 429 if "15 წუთში" in error else 401
             return JSONResponse({"error": error}, status_code=status)
@@ -184,14 +213,31 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     # -- commands & chat -----------------------------------------------------------
     @app.post("/api/command")
     async def command(request: Request):
-        line = str((await _json(request)).get("line", "")).strip()
-        result = await asyncio.to_thread(commands.run, services, line, "app")
+        line = str((await _json(request)).get("line", "")).strip()[:2000]
+        who = request.state.who
+        result = await asyncio.to_thread(commands.run, services, line, who)
         if result is None:
             return JSONResponse({"error": "უცნობი ბრძანება. /help"}, status_code=400)
+        logged = re.sub(r"^(/remote\s+add\s+\S+\s+\S+\s+)\S+", r"\1<token>", line, flags=re.I)  # no tokens in the log
+        log_event(settings.audit_log_path, user=who, tool="command", args={"line": logged[:300]},
+                  ok=not result.text.startswith(("⛔", "⚠️")))
         return result.as_dict()
 
+    @app.get("/api/interfaces")
+    async def interfaces(device: str = ""):
+        """Interface names of a device, for Tab completion in the terminal (cached for 10 minutes)."""
+        from ..features.ifnames import interface_names
+
+        try:
+            names = await asyncio.to_thread(interface_names, services, device)
+        except Exception as exc:  # noqa: BLE001 - completion is optional: never break the terminal
+            log.info("interface names for %s: %s", device, exc)
+            names = []
+        return {"device": device, "interfaces": names}
+
     @app.post("/api/chat")
-    async def chat(text: str = Form(""), files: list[UploadFile] = File(default=[])):
+    async def chat(request: Request, text: str = Form(""), files: list[UploadFile] = File(default=[])):
+        who = request.state.who
         if len(files) > MAX_FILES:
             return JSONResponse({"error": f"მაქსიმუმ {MAX_FILES} ფაილი"}, status_code=400)
         uploads = [(f.filename or "file", (f.content_type or "").lower(), await f.read()) for f in files]
@@ -210,7 +256,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
 
         async def run() -> None:
             try:
-                reply = await asyncio.to_thread(services.agent.chat, SESSION_ID, content, user="app",
+                # each account has its own conversation with the AI
+                reply = await asyncio.to_thread(services.agent.chat, f"{SESSION_ID}:{who}", content, user=who,
                                                 channel="web", on_tool=on_tool)
                 await queue.put(("answer", {"text": reply.text, "files": [p.name for p in reply.files],
                                              "buttons": [{"label": b.label, "command": b.command} for b in reply.buttons]}))
@@ -239,8 +286,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
     @app.post("/api/reset")
-    async def reset():
-        services.agent.reset(SESSION_ID)
+    async def reset(request: Request):
+        services.agent.reset(f"{SESSION_ID}:{request.state.who}")
         return {"ok": True}
 
     @app.get("/api/files/{name}")

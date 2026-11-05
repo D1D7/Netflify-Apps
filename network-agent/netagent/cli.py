@@ -458,6 +458,61 @@ def cmd_web_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _auth():
+    from .web.auth import WebAuth
+
+    return WebAuth(settings.data_dir / "web_auth.json")
+
+
+def cmd_user_add(args: argparse.Namespace) -> int:
+    from .web.auth import totp_uri
+
+    auth = _auth()
+    name = args.name.strip().lower()
+    exists = any(u["name"] == name for u in auth.list_users())
+    while True:
+        pw = getpass.getpass(f"პაროლი მომხმარებლისთვის '{name}' (მინ. 10 სიმბოლო): ")
+        if pw != getpass.getpass("გაიმეორე პაროლი: "):
+            console.print("[red]პაროლები არ ემთხვევა[/red]")
+            continue
+        try:
+            auth.add_user(name, pw, args.role)
+            break
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            if "სახელი" in str(exc) or "როლი" in str(exc):
+                return 1
+    role = "ადმინი" if args.role == "admin" else "მხოლოდ ნახვა"
+    console.print(f"[green]✅ {'განახლდა' if exists else 'დაემატა'}: {name} ({role})[/green]")
+    if not args.no_totp:
+        secret = auth.enable_user_totp(name)
+        console.print(f"\n🔐 [bold]2FA {name}-სთვის[/bold] — მის ტელეფონზე, Google/Microsoft Authenticator-ში: "
+                      "➕ → „Enter a setup key“")
+        console.print(f"   Account: NetAgent-{name}\n   Key:     [bold]{secret}[/bold]\n   Type:    Time based")
+        console.print(f"[dim]{totp_uri(secret, account=name)}[/dim]")
+        console.print("[yellow]ეს გასაღები მხოლოდ მას აჩვენე — ჩატში/სქრინშოტით არ გაგზავნო.[/yellow]")
+    console.print(f"\nშესვლა აპში: მომხმარებელი [bold]{name}[/bold] + პაროლი" + ("" if args.no_totp else " + 2FA კოდი"))
+    return 0
+
+
+def cmd_user_del(args: argparse.Namespace) -> int:
+    if _auth().delete_user(args.name.strip().lower()):
+        console.print(f"🗑️ {args.name} წაიშალა — მისი სესიები გაუქმდა.")
+        return 0
+    console.print(f"[red]'{args.name}' არ არსებობს[/red] (მთავარი ანგარიში 'admin' არ იშლება — მისთვის web-setup)")
+    return 1
+
+
+def cmd_user_list(args: argparse.Namespace) -> int:
+    users = _auth().list_users()
+    if not users:
+        console.print("ანგარიშები ჯერ არ არის — setup-password.bat")
+    for u in users:
+        role = "ადმინი" if u["role"] == "admin" else "მხოლოდ ნახვა"
+        console.print(f"• [bold]{u['name']}[/bold] — {role} · 2FA {'✅' if u['totp'] else '❌'}")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import main as server_main
 
@@ -585,6 +640,13 @@ def main(argv: list[str] | None = None) -> int:
     p_ws.add_argument("--totp", action="store_true", help="2FA-ს ჩართვაც (Google Authenticator)")
     p_ws.add_argument("--totp-only", action="store_true", help="მხოლოდ 2FA-ს ჩართვა/ახალი გასაღები")
     p_ws.add_argument("--disable-totp", action="store_true")
+    p_ua = sub.add_parser("user-add", help="ახალი მომხმარებელი აპისთვის (საკუთარი პაროლი + 2FA)")
+    p_ua.add_argument("name")
+    p_ua.add_argument("--role", choices=["viewer", "admin"], default="viewer", help="viewer = მხოლოდ ნახვა (ნაგულისხმევი)")
+    p_ua.add_argument("--no-totp", action="store_true", help="2FA-ს გარეშე (არ არის რეკომენდებული)")
+    p_ud = sub.add_parser("user-del", help="მომხმარებლის წაშლა (მისი სესიები მაშინვე უქმდება)")
+    p_ud.add_argument("name")
+    sub.add_parser("user-list", help="მომხმარებლების სია")
     p_serve = sub.add_parser("serve", help="აპის სერვერის გაშვება (+ მონიტორინგი + Telegram)")
     p_serve.add_argument("--log-file", help="ლოგების ჩაწერა ფაილში (ავტომატური გაშვებისთვის)")
     sub.add_parser("change-pin", help="PIN კონფიგურაციის ცვლილებების დასადასტურებლად")
@@ -629,6 +691,9 @@ def main(argv: list[str] | None = None) -> int:
         "cmd": cmd_cmd,
         "usage": cmd_usage,
         "web-setup": cmd_web_setup,
+        "user-add": cmd_user_add,
+        "user-del": cmd_user_del,
+        "user-list": cmd_user_list,
         "serve": cmd_serve,
         "doctor": cmd_doctor,
         "demo": cmd_demo,

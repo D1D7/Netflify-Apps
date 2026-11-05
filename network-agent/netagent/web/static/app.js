@@ -789,6 +789,212 @@ const TERM_CHIPS = {
 const termHistory = [];
 let termPos = 0;
 
+// ---------------------------------------------------------------- terminal: Cisco-style completion
+// Tab completes the word (or lists the options), "?" shows what can come next,
+// and abbreviations ("sh ip int br") are expanded to full words before sending,
+// because the server's read-only guard only accepts full verbs like "show".
+const L = Object.freeze({}); // leaf: nothing known after this word
+const RO = { print: { detail: L, terse: L, "count-only": L, "without-paging": L }, export: L }; // RouterOS reads
+const TERM_TREE = {
+  cisco: {
+    show: {
+      version: L, clock: L, users: L, inventory: L, history: L, license: L, module: L, logging: L, arp: L,
+      "running-config": { interface: L }, "startup-config": L, "access-lists": L, "port-security": L, snmp: L,
+      ip: {
+        interface: { brief: L }, route: { summary: L, connected: L, static: L, ospf: L, bgp: L, eigrp: L },
+        arp: L, bgp: { summary: L, neighbors: L }, ospf: { neighbor: L, interface: { brief: L }, database: L },
+        eigrp: { neighbors: L, topology: L }, protocols: L, dhcp: { binding: L, pool: L, conflict: L },
+        nat: { translations: L, statistics: L }, "access-lists": L, ssh: L,
+      },
+      ipv6: { interface: { brief: L }, route: L, neighbors: L },
+      interfaces: { status: L, description: L, trunk: L, counters: { errors: L }, summary: L, switchport: L },
+      vlan: { brief: L }, mac: { "address-table": { dynamic: L, count: L } },
+      "spanning-tree": { summary: L, root: L, blockedports: L },
+      cdp: { neighbors: { detail: L } }, lldp: { neighbors: { detail: L } },
+      ntp: { status: L, associations: L }, processes: { cpu: { sorted: L, history: L }, memory: { sorted: L } },
+      memory: { statistics: L }, environment: { all: L }, etherchannel: { summary: L },
+      standby: { brief: L }, vrrp: { brief: L }, power: { inline: L },
+    },
+    ping: L, traceroute: L,
+  },
+  juniper: {
+    show: {
+      interfaces: { terse: L, descriptions: L, extensive: L, statistics: L },
+      route: { summary: L, protocol: { bgp: L, ospf: L, static: L, direct: L }, table: L },
+      bgp: { summary: L, neighbor: L, group: L }, ospf: { neighbor: L, interface: L, database: L },
+      isis: { adjacency: L }, lldp: { neighbors: L }, arp: { "no-resolve": L }, vlans: L,
+      "ethernet-switching": { table: L, interfaces: L }, lacp: { interfaces: L },
+      system: { uptime: L, alarms: L, users: L, storage: L, processes: { extensive: L } },
+      chassis: { hardware: L, alarms: L, environment: L, "routing-engine": L, fpc: L },
+      log: { messages: L }, version: L, configuration: L, ntp: { status: L, associations: L },
+      security: { flow: { session: L }, zones: L, policies: L },
+    },
+    ping: L, traceroute: L,
+  },
+  mikrotik: {
+    "/ip": {
+      address: RO, route: RO, arp: RO, pool: RO, neighbor: RO, service: RO, "dhcp-client": RO,
+      "dhcp-server": { ...RO, lease: RO }, dns: { ...RO, cache: RO },
+      firewall: { filter: RO, nat: RO, mangle: RO, "address-list": RO, connection: RO },
+      ipsec: { "active-peers": RO, policy: RO },
+    },
+    "/interface": {
+      ...RO, ethernet: RO, vlan: RO, bonding: RO, list: RO, bridge: { ...RO, port: RO, host: RO },
+      wireless: { ...RO, "registration-table": RO }, wifi: { ...RO, "registration-table": RO }, wireguard: { ...RO, peers: RO },
+    },
+    "/system": { resource: RO, identity: RO, routerboard: RO, clock: RO, package: RO, health: RO, license: RO, history: RO },
+    "/routing": { route: RO, ospf: { neighbor: RO, instance: RO }, bgp: { session: RO, connection: RO } },
+    "/ipv6": { address: RO, route: RO, neighbor: RO },
+    "/log": RO, "/ppp": { active: RO }, "/user": { active: RO }, "/export": L,
+  },
+  huawei: {
+    display: {
+      version: L, "current-configuration": L, interface: { brief: L, description: L },
+      ip: { interface: { brief: L }, "routing-table": L }, arp: L, "mac-address": L, vlan: L,
+      lldp: { neighbor: { brief: L } }, bgp: { peer: L }, ospf: { peer: { brief: L } },
+      "cpu-usage": L, "memory-usage": L, logbuffer: L, alarm: { active: L }, device: L, clock: L, users: L,
+    },
+    ping: L, tracert: L,
+  },
+  fortinet: {
+    get: {
+      system: { status: L, interface: { physical: L }, performance: { status: L }, arp: L, ha: { status: L } },
+      router: { info: { "routing-table": { all: L }, bgp: { summary: L }, ospf: { neighbor: L } } },
+      hardware: { status: L, nic: L },
+    },
+    show: { firewall: { policy: L, address: L }, system: { interface: L } },
+    ping: L, traceroute: L,
+  },
+  linux: {
+    ip: { addr: L, route: L, link: L, neigh: L }, ss: { "-tulpn": L }, hostname: L, uname: { "-a": L },
+    uptime: L, df: { "-h": L }, free: { "-m": L }, ping: { "-c": L }, traceroute: L, arp: { "-n": L },
+    netstat: L, route: { "-n": L }, ifconfig: L,
+  },
+};
+// What may follow "|" (the server only checks the part before the pipe on network OSes).
+const TERM_PIPE = {
+  cisco: { include: L, exclude: L, begin: L, section: L, count: L },
+  juniper: { match: L, except: L, count: L, last: L, "no-more": L, display: { set: L } },
+  huawei: { include: L, exclude: L, begin: L, count: L },
+  fortinet: { grep: L },
+};
+
+function termFamily() {
+  const dev = (state.overview?.devices || []).find((d) => d.name === $("#term-dev").value);
+  const t = (dev?.type || "").toLowerCase();
+  for (const f of ["mikrotik", "juniper", "huawei", "fortinet", "linux"]) if (t.startsWith(f)) return f;
+  return "cisco";
+}
+
+function termMatches(node, word) {
+  const w = word.toLowerCase();
+  return Object.keys(node).filter((k) => k.toLowerCase().startsWith(w));
+}
+
+// Full keyword for what was typed (exact match wins, then a unique prefix), or null.
+function termResolve(node, word) {
+  if (!node || !word) return null;
+  const w = word.toLowerCase();
+  const exact = Object.keys(node).find((k) => k.toLowerCase() === w);
+  if (exact) return exact;
+  const m = termMatches(node, word);
+  return m.length === 1 ? m[0] : null;
+}
+
+// Interface names of each device (from /api/interfaces), offered after these keywords.
+const termIfaces = {};
+const TERM_IF_AFTER = new Set(["interfaces", "interface"]);
+
+function termLoadIfaces() {
+  const dev = $("#term-dev").value;
+  if (!dev || dev in termIfaces) return;
+  termIfaces[dev] = [];
+  apiJson(`/api/interfaces?device=${encodeURIComponent(dev)}`)
+    .then((r) => { termIfaces[dev] = r.interfaces || []; })
+    .catch(() => { delete termIfaces[dev]; });
+}
+
+// The node that offers the next word, the word being typed ("" right after a space),
+// and every option for it: keywords of the node + the device's interface names after "interface(s)".
+function termContext(text) {
+  const fam = termFamily();
+  const words = text.replace(/^\s+/, "").split(/\s+/);
+  const current = words.pop();
+  let node = TERM_TREE[fam];
+  let prev = "";
+  for (const w of words) {
+    if (w === "|") { node = TERM_PIPE[fam] || null; prev = "|"; continue; }
+    const k = termResolve(node, w);
+    node = k ? node[k] : null;
+    prev = k || "";
+  }
+  const ifaces = TERM_IF_AFTER.has(prev) ? termIfaces[$("#term-dev").value] || [] : [];
+  const options = [...(node ? Object.keys(node) : []), ...ifaces];
+  return { node, current, options, free: !node && !ifaces.length };
+}
+
+function termFilter(options, word) {
+  const w = word.toLowerCase();
+  return options.filter((k) => k.toLowerCase().startsWith(w));
+}
+
+// "sh ip int br" -> "show ip interface brief"; unknown words (interface names, IPs, regex) stay as typed.
+function termExpand(line) {
+  const fam = termFamily();
+  let node = TERM_TREE[fam];
+  return line.trim().split(/\s+/).map((w) => {
+    if (w === "|") { node = TERM_PIPE[fam] || null; return w; }
+    const k = termResolve(node, w);
+    node = k ? node[k] : null;
+    return k || w;
+  }).join(" ");
+}
+
+function termColumns(words) {
+  const width = Math.max(...words.map((w) => w.length)) + 2;
+  const perRow = Math.max(1, Math.floor(60 / width));
+  const rows = [];
+  for (let i = 0; i < words.length; i += perRow) rows.push("  " + words.slice(i, i + perRow).map((w) => w.padEnd(width)).join("").trimEnd());
+  return rows.join("\n");
+}
+
+function termNoMatch(input) {
+  const form = input.closest(".term-form");
+  form.classList.add("nomatch");
+  setTimeout(() => form.classList.remove("nomatch"), 350);
+}
+
+function termSetBefore(input, before, after) {
+  input.value = before + after;
+  input.setSelectionRange(before.length, before.length);
+}
+
+function termTab(input) {
+  const before = input.value.slice(0, input.selectionStart ?? input.value.length);
+  const after = input.value.slice(input.selectionEnd ?? input.value.length);
+  const { current, options } = termContext(before);
+  const base = before.slice(0, before.length - current.length);
+  const exact = current && options.find((k) => k.toLowerCase() === current.toLowerCase());
+  const opts = termFilter(options, current);
+  if (exact || opts.length === 1) return termSetBefore(input, `${base}${exact || opts[0]} `, after.replace(/^\s+/, ""));
+  if (!opts.length) return termNoMatch(input);
+  let prefix = opts[0];
+  for (const o of opts) while (!o.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
+  if (prefix.length > current.length) return termSetBefore(input, base + prefix, after);
+  termWrite(`${$("#term-prompt").textContent} ${before}`, "t-cmd");
+  termWrite(termColumns(opts));
+}
+
+function termQuestion(input) {
+  const before = input.value.slice(0, input.selectionStart ?? input.value.length);
+  const { current, options, free } = termContext(before);
+  termWrite(`${$("#term-prompt").textContent} ${before}?`, "t-cmd");
+  if (free) return termWrite("  <text>   (ინტერფეისი, IP, ფილტრი...)");
+  const opts = termFilter(options, current);
+  if (opts.length) return termWrite(termColumns(opts));
+  termWrite(current ? "% Unrecognized command" : "  <cr>", current ? "t-err" : "");
+}
+
 async function openTerminal() {
   if (!state.overview) await loadOverview();
   const sel = $("#term-dev");
@@ -810,6 +1016,7 @@ function termChips() {
   const type = dev?.type || "";
   const list = type.startsWith("mikrotik") ? TERM_CHIPS.mikrotik : type.startsWith("juniper") ? TERM_CHIPS.juniper : TERM_CHIPS.default;
   $("#term-prompt").textContent = dev ? `${dev.name}${type.startsWith("mikrotik") ? " >" : "#"}` : "#";
+  termLoadIfaces();
   $("#term-chips").replaceChildren(...list.map((c) => {
     const b = el("button");
     b.type = "button";
@@ -851,9 +1058,16 @@ function showLogin(info = {}) {
   $("#password").focus();
 }
 
+function showWho(me) {
+  if (!me?.user) return;
+  const role = me.role === "viewer" ? "მხოლოდ ნახვა" : "ადმინი";
+  $("#whoami").textContent = `შესული ხარ როგორც: ${me.user} · ${role}`;
+}
+
 function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
+  apiJson("/api/me").then(showWho).catch(() => {});
   switchView(state.view);
   renderAll();
   loadOverview();
@@ -883,7 +1097,8 @@ async function init() {
     btn.setAttribute("aria-busy", "true");
     btn.textContent = "შესვლა...";
     try {
-      const res = await api("/api/login", { method: "POST", json: { password: $("#password").value, totp: $("#totp").value } });
+      const res = await api("/api/login", { method: "POST", json: {
+        username: $("#username").value.trim(), password: $("#password").value, totp: $("#totp").value } });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         $("#login-error").textContent = data.error || "შესვლა ვერ მოხერხდა";
@@ -941,10 +1156,18 @@ async function init() {
   $("#term-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const input = $("#term-input");
-    runTerm(input.value);
+    runTerm(termExpand(input.value));
     input.value = "";
   });
+  $("#term-input").addEventListener("beforeinput", (e) => {
+    // "?" shows the options instead of being typed, like on Cisco/MikroTik.
+    if (e.data === "?") { e.preventDefault(); termQuestion(e.target); }
+  });
+  // Phones have no Tab key: the Tab button does the same. pointerdown keeps the keyboard open.
+  $("#term-tab").addEventListener("pointerdown", (e) => e.preventDefault());
+  $("#term-tab").addEventListener("click", () => { const i = $("#term-input"); i.focus(); termTab(i); });
   $("#term-input").addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); termTab(e.target); return; }
     if (e.key === "ArrowUp" && termPos > 0) { termPos -= 1; e.target.value = termHistory[termPos]; e.preventDefault(); }
     if (e.key === "ArrowDown") { termPos = Math.min(termHistory.length, termPos + 1); e.target.value = termHistory[termPos] || ""; }
   });

@@ -626,6 +626,10 @@ def execute_tool(name: str, args: Any, ctx: ToolContext) -> tuple[str, bool]:
     if handler is None:
         return f"უცნობი ხელსაწყო: {name}", True
     is_error = False
+    from ..permissions import VIEWER_BLOCKED_TOOLS, is_viewer
+
+    if is_viewer(ctx.user) and name in VIEWER_BLOCKED_TOOLS:
+        return "შეცდომა: მომხმარებელს მხოლოდ ნახვის უფლება აქვს — ეს მოქმედება არ შეიძლება.", True
     try:
         args = _validate_input(name, args)
         result = handler(ctx, **args)

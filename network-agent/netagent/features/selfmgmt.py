@@ -109,7 +109,7 @@ def backup_paths() -> list[tuple[Path, str]]:
         if base.exists():
             for p in base.rglob("*"):
                 rel = p.relative_to(base)
-                if p.is_file() and not (set(rel.parts) & skip_dirs) and p.name != "oui.txt":
+                if p.is_file() and not (set(rel.parts) & skip_dirs) and p.name not in {"oui.txt", "remotes.json"}:
                     out.append((p, f"{prefix}/{rel.as_posix()}"))
     if settings.inventory_path.exists():
         out.append((settings.inventory_path, "inventory/devices.yaml"))
@@ -123,8 +123,17 @@ def make_backup(dest_dir: Path | None = None) -> Path:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for f, name in backup_paths():
             try:
+                if f.name == "web_auth.json":
+                    # the session signing key would let anyone holding the ZIP forge a login: leave it out
+                    # (a new one is created on restore; everyone just logs in again)
+                    import json
+
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    data.pop("session_key", None)
+                    z.writestr(name, json.dumps(data, indent=1))
+                    continue
                 z.write(f, name)
-            except OSError:
+            except (OSError, ValueError):
                 pass
         z.writestr("README.txt", "NetAgent backup. Restore: unzip into the NetAgent folder (stop NetAgent first).\n"
                                  ".env is NOT included - keep your API keys separately.\n")
@@ -135,7 +144,7 @@ def selfbackup_cmd(s, args, user) -> Result:
     path = make_backup()
     size = path.stat().st_size / 1e6
     return Result(f"💾 **NetAgent-ის backup** ({size:.1f} MB): შენიშვნები, ისტორია, ალერტები, პარამეტრები, "
-                  "inventory და config backup-ები.\n⚠️ შეიცავს აპის პაროლის hash-ს და მოწყობილობების config-ებს — "
+                  "inventory და config backup-ები.\n⚠️ შეიცავს აპის პაროლის hash-ს, 2FA გასაღებს და მოწყობილობების config-ებს — "
                   "შეინახე უსაფრთხო ადგილას. `.env` (API key-ები) **არ** არის შიგნით.", files=[path])
 
 

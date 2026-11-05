@@ -91,8 +91,16 @@ def validate(device, commands: list[str]) -> list[str]:
             continue
         if len(c) > 250 or re.search(r"[\x00-\x08\x0b-\x1f\x7f]", c):
             raise CommandError(f"არასწორი ხაზი: {c[:60]}")
+        check = c.strip()
+        if fam == "mikrotik":
+            # one command per line: ";" chains, ":execute"/":do" scripts and [..] substitutions would hide what runs
+            plain = re.sub(r"\[\s*find\b[^\[\];:]*\]", "", check)  # "[find name=ether1]" is the normal idiom
+            if re.search(r"[;\[\]]|(?:^|[\s{(]):[a-z]", plain, re.I):
+                raise CommandError(f"⛔ RouterOS: ერთ ხაზზე ერთი ბრძანება, სკრიპტინგის გარეშე (; : [ ]): `{check[:80]}`")
+            # RouterOS v7 also accepts "/system/reboot" and "/user/add": check the space form too
+            check = re.sub(r"(?<=[\w-])/(?=[a-z])", " ", check)
         for pat in FORBIDDEN:
-            if re.search(pat, c.strip(), re.I):
+            if re.search(pat, check, re.I) or re.search(pat, c.strip(), re.I):
                 raise CommandError(f"⛔ ეს ბრძანება ცვლილებებში დაშვებული არ არის (ზედმეტად სახიფათოა): `{c.strip()[:80]}`")
         if fam == "mikrotik" and not c.strip().startswith("/"):
             raise CommandError("RouterOS ბრძანება უნდა იწყებოდეს '/'-ით (სრული გზით, მაგ. /ip address add ...)")

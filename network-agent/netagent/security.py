@@ -33,6 +33,14 @@ _LINUX_ALLOWED_FIRST = {
 }
 _SHELL_META = re.compile(r"[;&|<>`$\\\n\r]")
 
+# Words are runs of letters/digits/_/- so quotes, braces or brackets can't hide a verb ("reboot}", '"reboot"').
+_TOKEN = re.compile(r"[\w-]+")
+# Pipe options that write files or send output elsewhere: Cisco "| redirect/tee/append", Junos "| save".
+_FORBIDDEN_PIPE = {"redirect", "tee", "append", "save"}
+# RouterOS scripting: command separators, blocks, [find] substitutions, variables and ":execute"/":do" etc.
+_ROS_SCRIPTING = re.compile(r"[;{}\[\]$]|(?:^|[\s(]):[a-z]", re.I)
+_ROS_FORBIDDEN = {"run", "fetch"}  # /system script run, /tool fetch
+
 
 class CommandRejected(ValueError):
     """Raised when a command is not allowed to run on a device."""
@@ -62,13 +70,20 @@ def validate_command(command: str, device_type: str) -> str:
     # Only the part before a pipe filter is checked for forbidden verbs on network
     # OSes; the filter part (include/exclude/begin/match) is harmless there.
     head = lowered.split("|", 1)[0] if family == "default" else lowered
-    tokens = set(re.split(r"[\s/=]+", head)) - {""}
+    tokens = set(_TOKEN.findall(head))
 
-    bad = tokens & _FORBIDDEN_TOKENS
+    bad = tokens & (_FORBIDDEN_TOKENS | (_ROS_FORBIDDEN if family == "mikrotik" else set()))
     if bad:
         raise CommandRejected(f"აკრძალული სიტყვა ბრძანებაში: {', '.join(sorted(bad))}")
 
+    if family == "default":
+        bad_pipe = set(re.findall(r"\|\s*([\w-]+)", lowered)) & _FORBIDDEN_PIPE
+        if bad_pipe:
+            raise CommandRejected(f"აკრძალული ფილტრი (ფაილში ჩაწერა/გაგზავნა): | {', '.join(sorted(bad_pipe))}")
+
     if family == "mikrotik":
+        if _ROS_SCRIPTING.search(cmd):
+            raise CommandRejected("RouterOS სკრიპტინგი (; { } [ ] $ :execute ...) აკრძალულია")
         # RouterOS read commands end with "print" (optionally with args) or "export".
         if not cmd.startswith("/"):
             raise CommandRejected("RouterOS ბრძანება უნდა იწყებოდეს '/'-ით")

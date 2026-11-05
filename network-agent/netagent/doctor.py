@@ -44,6 +44,30 @@ def _tailscale_path() -> str | None:
     return None
 
 
+def _netagent_running(port: int) -> bool:
+    """Is the process on this port our own server (not some other program)?"""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/manifest.webmanifest", timeout=3) as r:  # noqa: S310 - localhost
+            return "NetAgent" in r.read(4096).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _same_devices(example: Path, inv) -> bool:
+    """devices.yaml still holds the sample devices (compares names and IPs, so line endings or edited comments don't matter)."""
+    from .inventory import Inventory
+
+    try:
+        sample = Inventory.load(example)
+    except Exception:  # noqa: BLE001
+        return False
+    def key(i):
+        return {(n, d.host) for n, d in i.devices.items()}
+    return bool(inv.devices) and key(sample) == key(inv)
+
+
 def run_checks(online: bool = True) -> list[Check]:
     checks: list[Check] = []
     add = checks.append
@@ -149,8 +173,9 @@ def run_checks(online: bool = True) -> list[Check]:
             inv = None
         if inv is not None:
             example = PROJECT_ROOT / "inventory" / "devices.example.yaml"
-            if example.exists() and example.read_bytes() == inv_path.read_bytes():
+            if example.exists() and _same_devices(example, inv):
                 add(Check(WARN, "devices.yaml ჯერ მაგალითია", "ჩაწერე შენი მოწყობილობები, ან ჩატში: /discover 192.168.1.0/24"))
+                inv.devices = {}  # sample IPs: an SSH check would only report fake failures
             elif not inv.devices:
                 add(Check(WARN, "inventory ცარიელია", "ჩატში: /discover 192.168.1.0/24 ან ჩაწერე devices.yaml-ში"))
             else:
@@ -176,13 +201,20 @@ def run_checks(online: bool = True) -> list[Check]:
                               "შეამოწმე IP, პორტი და რომ ეს კომპიუტერი მართვის ქსელში წვდება (ping)"))
 
     # -- server port & data dir --------------------------------------------------------------
+    running = False
     try:
         with socket.socket() as s:
             s.bind((settings.web_host, settings.web_port))
         add(Check(OK, f"პორტი {settings.web_port} თავისუფალია"))
     except OSError:
-        add(Check(WARN, f"პორტი {settings.web_port} დაკავებულია", "NetAgent უკვე ხომ არ არის გაშვებული? ან შეცვალე NETAGENT_WEB_PORT"))
-    if settings.syslog_port > 0:
+        running = _netagent_running(settings.web_port)
+        if running:  # the port is busy because NetAgent itself is serving on it
+            add(Check(OK, f"NetAgent უკვე მუშაობს: http://127.0.0.1:{settings.web_port}"))
+        else:
+            add(Check(WARN, f"პორტი {settings.web_port} დაკავებულია სხვა პროგრამით", "შეცვალე NETAGENT_WEB_PORT .env-ში"))
+    if settings.syslog_port > 0 and running:
+        add(Check(OK, f"syslog udp/{settings.syslog_port} — NetAgent-ის სერვერი იღებს"))
+    elif settings.syslog_port > 0:
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                 s.bind((settings.syslog_host, settings.syslog_port))

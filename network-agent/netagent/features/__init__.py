@@ -24,7 +24,7 @@ import os
 log = logging.getLogger("netagent.features")
 
 MODULES = ("homenet", "isp", "sites", "ops", "notify", "selfmgmt", "teach", "ifstats", "cve", "golden", "gitbackup",
-           "firewall", "pathtrace", "morebooks", "incidents", "passport", "weekly", "ipam", "changes", "flows", "snmp", "importers", "metrics")
+           "firewall", "pathtrace", "morebooks", "incidents", "passport", "weekly", "ipam", "changes", "flows", "snmp", "importers", "metrics", "lan", "activity", "remote")
 _installed = False
 
 

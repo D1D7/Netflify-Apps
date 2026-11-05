@@ -482,6 +482,10 @@ def run(s, line: str, user: str) -> Result | None:
     if parsed is None:
         return None
     name, args = parsed
+    from .permissions import DENIED, VIEWER_BLOCKED_COMMANDS, is_viewer
+
+    if is_viewer(user) and name in VIEWER_BLOCKED_COMMANDS:
+        return Result(DENIED)
     try:
         return COMMANDS[name](s, args, user)
     except CommandError as exc:

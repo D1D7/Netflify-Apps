@@ -60,6 +60,13 @@
       <p class="muted">AI ქსელის ასისტენტი</p>
       <form id="login-form" autocomplete="on">
         <label class="field">
+          <span class="field-label">მომხმარებელი <span class="muted">(მთავარი ანგარიში — ცარიელი)</span></span>
+          <span class="field-box">
+            <svg class="icon"><use href="#i-shield"/></svg>
+            <input id="username" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" placeholder="admin">
+          </span>
+        </label>
+        <label class="field">
           <span class="field-label">პაროლი</span>
           <span class="field-box">
             <svg class="icon"><use href="#i-lock"/></svg>
@@ -207,6 +214,7 @@
       </div>
 
       <h2 class="section">ანგარიში</h2>
+      <p class="about" id="whoami"></p>
       <div class="list">
         <button class="list-row" type="button" id="logout">
           <span class="row-icon gray"><svg class="icon"><use href="#i-logout"/></svg></span>
@@ -228,10 +236,11 @@
       <pre id="term-out" class="term-out" aria-live="polite"></pre>
       <form id="term-form" class="term-form" autocomplete="off">
         <span class="term-prompt" id="term-prompt">#</span>
-        <input id="term-input" type="text" spellcheck="false" autocapitalize="off" placeholder="show ip interface brief" enterkeyhint="send">
+        <input id="term-input" type="text" spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" placeholder="show ip interface brief" enterkeyhint="send">
+        <button class="term-tab" id="term-tab" type="button" aria-label="Tab — სიტყვის დასრულება">Tab</button>
         <button class="send" type="submit" aria-label="გაშვება"><svg class="icon"><use href="#i-send"/></svg></button>
       </form>
-      <p class="term-note">მხოლოდ წაკითხვა: show / print / ping. ცვლილებები — ჩატით, დადასტურებით.</p>
+      <p class="term-note">Tab — სიტყვის დასრულება · ? — ვარიანტები · შემოკლება მუშაობს (sh ip int br). მხოლოდ წაკითხვა: show / print / ping.</p>
     </section>
 
     <nav class="tabbar">
