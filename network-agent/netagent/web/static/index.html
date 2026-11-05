@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="ka">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <title>NetAgent</title>
+</head>
+<body>
+  <!-- Icon set: 24px stroke icons, colored with currentColor -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true">
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l1.4-4.8A8.5 8.5 0 1 1 21 11.5z"/></symbol>
+    <symbol id="i-network" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M10.8 7.2 6.2 15.8M13.2 7.2l4.6 8.6M7.5 18h9"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></symbol>
+    <symbol id="i-attach" viewBox="0 0 24 24"><path d="m20.5 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.3 3.3 0 0 1 4.7 4.7l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7L20 8.5M20 3.5v5h-5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 1 1 12 0c0 6.5 2.5 8.5 2.5 8.5h-17S6 15.5 6 9zM10 21a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 13.2A8.5 8.5 0 1 1 10.8 3.5a6.6 6.6 0 0 0 9.7 9.7z"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4H9M15.5 16.5 20 12l-4.5-4.5M20 12H9"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 6.5h16M9.5 6.5V4.5h5v2M18 6.5l-.9 13a1.5 1.5 0 0 1-1.5 1.5H8.4a1.5 1.5 0 0 1-1.5-1.5L6 6.5M10 11v5.5M14 11v5.5"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .9-1 1.6v.4M12 17h.01"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6A2 2 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 8.2 7.5 9.5 4.3-1.3 7.5-4.9 7.5-9.5V6z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.5M4.5 12v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V12"/></symbol>
+    <symbol id="i-report" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="7" rx="2"/><rect x="3.5" y="13" width="17" height="7" rx="2"/><path d="M7.5 7.5h.01M7.5 16.5h.01M11 7.5h2M11 16.5h2"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><path d="M4.5 19.5h4l10-10a2.8 2.8 0 0 0-4-4l-10 10z"/><path d="m13 7 4 4"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6.5 5 13L17 12h4"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 4.3 2.6 17.6A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-2.9L13.7 4.3a2 2 0 0 0-3.4 0zM12 9.5v4M12 17h.01"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m20.5 15.5-4.5-4.5-9.5 8.5"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3.5H7A2 2 0 0 0 5 5.5v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5M8.5 13h7M8.5 16.5h4.5"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/><path d="M12 7.5v6M9.5 11 12 13.5l2.5-2.5M10.5 18.5h3"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15h4.5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.4-4.4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 9.6-4.8M18 9c0 6.5 2.5 8.5 2.5 8.5H8M10 21a2.2 2.2 0 0 0 4 0M3.5 3.5l17 17"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.8 9 19.5 10.8 13.8 12.6 12 18.5 10.2 12.6 4.5 10.8 10.2 9z"/></symbol>
+    <symbol id="i-dollar" viewBox="0 0 24 24"><path d="M12 3v18M16.5 7.5c-.6-1.4-2.3-2.3-4.5-2.3-2.6 0-4.3 1.3-4.3 3.2 0 4.6 9 2.4 9 7 0 2-1.9 3.4-4.7 3.4-2.3 0-4-.9-4.6-2.6"/></symbol>
+  </svg>
+
+  <!-- Login -->
+  <main id="login" class="login" hidden>
+    <div class="login-card">
+      <img src="/static/icon-192.png" alt="" class="login-logo" width="64" height="64">
+      <h1>NetAgent</h1>
+      <p class="muted">AI ქსელის ასისტენტი</p>
+      <form id="login-form" autocomplete="on">
+        <label class="field">
+          <span class="field-label">პაროლი</span>
+          <span class="field-box">
+            <svg class="icon"><use href="#i-lock"/></svg>
+            <input id="password" type="password" autocomplete="current-password" required>
+            <button type="button" id="pw-toggle" class="ghost-icon" aria-label="პაროლის ჩვენება"><svg class="icon"><use href="#i-eye"/></svg></button>
+          </span>
+        </label>
+        <label class="field" id="totp-row" hidden>
+          <span class="field-label">2FA კოდი</span>
+          <span class="field-box">
+            <svg class="icon"><use href="#i-shield"/></svg>
+            <input id="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]*" maxlength="7" placeholder="000 000">
+          </span>
+        </label>
+        <button type="submit" class="btn primary block" id="login-btn">შესვლა</button>
+        <p id="login-error" class="error" role="alert"></p>
+        <p id="login-setup" class="hint" hidden>
+          პაროლი ჯერ არ არის დაყენებული. სერვერზე გაუშვი:<br><code>python -m netagent web-setup --totp</code>
+        </p>
+      </form>
+    </div>
+    <p class="login-foot muted">🔒 დაცული კავშირი · მხოლოდ შენი ქსელიდან</p>
+  </main>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="title-wrap">
+        <img src="/static/icon-192.png" alt="" width="34" height="34" class="logo">
+        <div>
+          <div class="title" id="view-title">NetAgent</div>
+          <div class="subtitle" id="view-sub">AI ქსელის ასისტენტი</div>
+        </div>
+      </div>
+      <button id="netsum" class="status-pill" type="button" title="ქსელის სტატუსი">
+        <span class="dot"></span><span class="txt">…</span>
+      </button>
+    </header>
+
+    <section id="view-chat" class="view">
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <div class="dock">
+        <div id="quick" class="quick"></div>
+        <div id="attachments" class="attachments"></div>
+        <form id="composer" class="composer">
+          <label class="comp-btn" title="ფოტო ან ფაილი">
+            <svg class="icon"><use href="#i-attach"/></svg>
+            <input id="file" type="file" multiple accept="image/*,.txt,.cfg,.conf,.log,.csv,.rsc,.json,text/*" hidden>
+          </label>
+          <textarea id="input" rows="1" placeholder="მკითხე რამე ან დაწერე /status" enterkeyhint="send"></textarea>
+          <button id="mic" class="comp-btn" type="button" aria-label="ხმით კითხვა" title="ხმით კითხვა" hidden><svg class="icon"><use href="#i-mic"/></svg></button>
+          <button id="send" class="send" type="submit" aria-label="გაგზავნა" disabled><svg class="icon"><use href="#i-send"/></svg></button>
+        </form>
+      </div>
+    </section>
+
+    <section id="view-dash" class="view scroll" hidden>
+      <div class="pane-head">
+        <span>ქსელი</span>
+        <button type="button" id="pane-expand" class="link-btn">სრულად<svg class="icon"><use href="#i-chevron"/></svg></button>
+      </div>
+      <div class="hero" id="hero">
+        <div class="hero-top">
+          <div>
+            <div class="hero-label">ხელმისაწვდომი მოწყობილობები</div>
+            <div class="hero-value" id="dash-summary">…</div>
+          </div>
+          <button id="dash-refresh" class="round-btn" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
+        </div>
+        <div class="segbar" id="segbar"><span class="seg up"></span><span class="seg down"></span></div>
+        <div class="hero-sub" id="dash-sub"></div>
+      </div>
+
+      <div class="tiles pane-hide" id="tiles"></div>
+
+      <div class="isp-card" id="isp-card" hidden></div>
+
+      <h2 class="section pane-hide">სწრაფი მოქმედებები</h2>
+      <div class="actions pane-hide" id="dash-actions"></div>
+
+      <div class="section-row">
+        <h2 class="section">მოწყობილობები</h2>
+        <div class="segmented" id="dev-filter" role="tablist">
+          <button type="button" data-filter="all" class="on">ყველა</button>
+          <button type="button" data-filter="down">გათიშული</button>
+        </div>
+      </div>
+      <label class="search pane-hide" id="dev-search-wrap" hidden>
+        <svg class="icon"><use href="#i-search"/></svg>
+        <input id="dev-search" type="search" placeholder="ძებნა: სახელი, IP, საიტი">
+      </label>
+      <div id="devices" class="devices"></div>
+
+      <h2 class="section">ბოლო მოვლენები</h2>
+      <div id="alerts" class="timeline"></div>
+    </section>
+
+    <section id="view-settings" class="view scroll" hidden>
+      <h2 class="section">შეტყობინებები</h2>
+      <div class="list">
+        <div class="list-row">
+          <span class="row-icon blue"><svg class="icon"><use href="#i-bell"/></svg></span>
+          <span class="row-text"><span class="row-title">Push შეტყობინებები</span><span class="row-sub" id="push-status">…</span></span>
+          <label class="switch"><input type="checkbox" id="push-toggle"><span class="track"></span></label>
+        </div>
+        <button class="list-row" type="button" id="push-test">
+          <span class="row-icon green"><svg class="icon"><use href="#i-check"/></svg></span>
+          <span class="row-text"><span class="row-title">სატესტო შეტყობინება</span><span class="row-sub">გამოგიგზავნის შემოწმებისთვის</span></span>
+          <svg class="icon chev"><use href="#i-chevron"/></svg>
+        </button>
+      </div>
+
+      <h2 class="section">გარეგნობა</h2>
+      <div class="list">
+        <div class="list-row">
+          <span class="row-icon violet"><svg class="icon"><use href="#i-moon"/></svg></span>
+          <span class="row-text"><span class="row-title">თემა</span></span>
+          <div class="segmented" id="theme">
+            <button type="button" data-theme="auto">ავტო</button>
+            <button type="button" data-theme="light">ღია</button>
+            <button type="button" data-theme="dark">მუქი</button>
+          </div>
+        </div>
+        <button class="list-row" type="button" id="install" hidden>
+          <span class="row-icon blue"><svg class="icon"><use href="#i-phone"/></svg></span>
+          <span class="row-text"><span class="row-title">აპის დაინსტალირება</span><span class="row-sub">მთავარ ეკრანზე, როგორც ჩვეულებრივი აპი</span></span>
+          <svg class="icon chev"><use href="#i-chevron"/></svg>
+        </button>
+      </div>
+
+      <h2 class="section">AI ხარჯი</h2>
+      <div class="list"><div class="usage md" id="usage">…</div></div>
+
+      <h2 class="section">საუბარი</h2>
+      <div class="list">
+        <button class="list-row" type="button" id="help">
+          <span class="row-icon gray"><svg class="icon"><use href="#i-terminal"/></svg></span>
+          <span class="row-text"><span class="row-title">სწრაფი ბრძანებები</span><span class="row-sub">/status, /cmd, /graph, /mute...</span></span>
+          <svg class="icon chev"><use href="#i-chevron"/></svg>
+        </button>
+        <button class="list-row" type="button" id="clear-chat">
+          <span class="row-icon red"><svg class="icon"><use href="#i-trash"/></svg></span>
+          <span class="row-text"><span class="row-title danger-text">საუბრის გასუფთავება</span><span class="row-sub">შლის ისტორიას ამ ტელეფონზე</span></span>
+        </button>
+      </div>
+
+      <h2 class="section">ანგარიში</h2>
+      <div class="list">
+        <button class="list-row" type="button" id="logout">
+          <span class="row-icon gray"><svg class="icon"><use href="#i-logout"/></svg></span>
+          <span class="row-text"><span class="row-title">გასვლა</span></span>
+        </button>
+        <button class="list-row" type="button" id="logout-all">
+          <span class="row-icon red"><svg class="icon"><use href="#i-lock"/></svg></span>
+          <span class="row-text"><span class="row-title danger-text">გასვლა ყველა მოწყობილობიდან</span><span class="row-sub">გააუქმებს ყველა სესიას</span></span>
+        </button>
+      </div>
+      <p class="about" id="about"></p>
+    </section>
+
+    <section id="view-term" class="view" hidden>
+      <div class="term-bar">
+        <select id="term-dev" aria-label="მოწყობილობა"></select>
+        <div class="term-chips" id="term-chips"></div>
+      </div>
+      <pre id="term-out" class="term-out" aria-live="polite"></pre>
+      <form id="term-form" class="term-form" autocomplete="off">
+        <span class="term-prompt" id="term-prompt">#</span>
+        <input id="term-input" type="text" spellcheck="false" autocapitalize="off" placeholder="show ip interface brief" enterkeyhint="send">
+        <button class="send" type="submit" aria-label="გაშვება"><svg class="icon"><use href="#i-send"/></svg></button>
+      </form>
+      <p class="term-note">მხოლოდ წაკითხვა: show / print / ping. ცვლილებები — ჩატით, დადასტურებით.</p>
+    </section>
+
+    <nav class="tabbar">
+      <button type="button" data-view="chat" class="active"><span class="tab-ico"><svg class="icon"><use href="#i-chat"/></svg></span>ჩატი</button>
+      <button type="button" data-view="dash"><span class="tab-ico"><svg class="icon"><use href="#i-network"/></svg><span class="badge" id="tab-badge" hidden></span></span>ქსელი</button>
+      <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span>ტერმინალი</button>
+      <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span>პარამეტრები</button>
+    </nav>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

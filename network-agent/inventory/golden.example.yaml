@@ -1,0 +1,28 @@
+# NetAgent golden config: what every device must / must not have.
+# დააკოპირე → inventory/golden.yaml და შეცვალე. შემოწმება: /golden
+# pattern = regular expression, რომელიც config-ის ხაზებში იძებნება (^ = ხაზის დასაწყისი).
+# სექციები: "all", device_type (cisco_ios, mikrotik_routeros...), "role:<role>", "site:<site>".
+
+cisco_ios:
+  required:
+    - {name: NTP სერვერი, pattern: '^ntp server '}
+    - {name: გარე syslog, pattern: '^logging (host )?\d'}
+    - {name: service password-encryption, pattern: '^service password-encryption'}
+    - {name: SSH v2, pattern: '^ip ssh version 2'}
+    - {name: login banner, pattern: '^banner (login|motd)'}
+  forbidden:
+    - {name: Telnet VTY-ზე, pattern: 'transport input .*telnet'}
+    - {name: HTTP სერვერი, pattern: '^ip http server'}
+    - {name: SNMP public/private, pattern: '^snmp-server community (public|private)\b'}
+
+"role:access-switch":
+  required:
+    - {name: BPDU guard, pattern: 'spanning-tree portfast bpduguard default|spanning-tree bpduguard enable'}
+    - {name: storm-control, pattern: '^ storm-control broadcast'}
+
+mikrotik_routeros:
+  required:
+    - {name: NTP კლიენტი, pattern: 'ntp client'}
+    - {name: გარე syslog, pattern: 'target=remote|remote='}
+  forbidden:
+    - {name: DNS გარე მოთხოვნებისთვის ღია, pattern: 'allow-remote-requests=yes'}
