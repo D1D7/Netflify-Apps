@@ -357,6 +357,8 @@ python -m netagent serve
 
 10. 🎮 **`demo.bat`**: სადემონსტრაციო ქსელი რეალური მოწყობილობების გარეშე (http://127.0.0.1:8090, პაროლი `netagent-demo`). ნამდვილ პარამეტრებს არ ეხება. ნამდვილი MikroTik VirtualBox-ში: **`lab-mikrotik.bat`**, დეტალები [docs/LABS.md](docs/LABS.md)-ში.
 
+11. 🎁 **`share.bat`**: ქმნის `NetAgent-share-....zip`-ს Desktop-ზე, რომელიც სხვას შეგიძლია მისცე. შიგნით მხოლოდ კოდი და სკრიპტებია. `.env`, პაროლები, `devices.yaml` და `data` შიგ არ მოხვდება. ის, ვისაც მისცემ, ამოაარქივებს და იგივე ნაბიჯებს გაივლის (`install.bat` → თავისი API key `.env`-ში → `setup-password.bat` → `start.bat`). ასე თავის ქსელს და თავის მონაცემებს დაინახავს.
+
 > ⚠️ სანამ NetAgent მუშაობს, კომპიუტერი არ უნდა დაიძინოს: Settings → System → Power → Sleep → **Never** (როცა დენზეა შეერთებული).
 
 ### Linux / Mac
