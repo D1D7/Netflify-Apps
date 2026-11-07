@@ -67,7 +67,7 @@ function applyTheme(mode) {
   else delete root.dataset.theme;
   document.querySelectorAll("#theme button").forEach((b) => b.classList.toggle("on", b.dataset.theme === (mode || "auto")));
   const dark = mode === "dark" || (mode !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", dark ? "#0d1117" : "#f6f7f9"));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", dark ? "#0a0f1c" : "#f4f6fa"));
 }
 
 function loadTheme() {
@@ -241,7 +241,7 @@ function renderAll() {
   const box = $("#messages");
   box.replaceChildren();
   if (!state.messages.length) {
-    const e = el("div", "empty", `<img src="/static/icon-192.png" alt="" width="64" height="64" class="empty-logo">
+    const e = el("div", "empty", `<img src="/static/logo.svg" alt="" width="64" height="64" class="empty-logo">
       <h3>გამარჯობა 👋</h3><p>მკითხე რამე ქსელზე, გამომიგზავნე ფოტო ან config ფაილი.</p>`);
     const grid = el("div", "suggestions");
     for (const [ico, color, q] of SUGGESTIONS) {

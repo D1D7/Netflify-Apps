@@ -1,5 +1,5 @@
 // NetAgent service worker: app shell cache + push notifications.
-const CACHE = "netagent-shell-v10";
+const CACHE = "netagent-shell-v11";
 const SHELL = [
   "/",
   "/static/app.css",
@@ -7,6 +7,7 @@ const SHELL = [
   "/manifest.webmanifest",
   "/static/icon-192.png",
   "/static/icon-512.png",
+  "/static/logo.svg",
 ];
 
 self.addEventListener("install", (event) => {
@@ -52,7 +53,7 @@ self.addEventListener("push", (event) => {
       tag: data.tag,
       renotify: true,
       icon: "/static/icon-192.png",
-      badge: "/static/icon-192.png",
+      badge: "/static/badge-96.png",
       data: { url: data.url },
     });
     const clients = await self.clients.matchAll({ type: "window" });
