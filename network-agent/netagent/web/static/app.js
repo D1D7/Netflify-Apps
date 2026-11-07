@@ -490,6 +490,7 @@ function setupVoice() {
 
 const QUICK = [
   ["pulse", "blue", "სტატუსი", "/status"],
+  ["sparkle", "green", "დიაგნოსტიკა", "/diagnose"],
   ["network", "green", "ინტერნეტი", "/isp"],
   ["search", "violet", "ქსელის სკანი", "/scan"],
   ["file", "blue", "ჟურნალი", "/activity"],
