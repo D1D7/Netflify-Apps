@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ka">
+<html lang="ka" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -130,15 +130,20 @@
         <button type="button" id="pane-expand" class="link-btn">სრულად<svg class="icon"><use href="#i-chevron"/></svg></button>
       </div>
       <div class="hero" id="hero">
-        <div class="hero-top">
-          <div>
-            <div class="hero-label">ხელმისაწვდომი მოწყობილობები</div>
-            <div class="hero-value" id="dash-summary">…</div>
-          </div>
-          <button id="dash-refresh" class="round-btn" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="50"/>
+            <circle class="ring-down" id="ring-down" cx="60" cy="60" r="50" pathLength="100"/>
+            <circle class="ring-up" id="ring-up" cx="60" cy="60" r="50" pathLength="100"/>
+          </svg>
+          <div class="ring-text"><div class="hero-value" id="dash-summary">…</div><div class="ring-cap">ონლაინ</div></div>
         </div>
-        <div class="segbar" id="segbar"><span class="seg up"></span><span class="seg down"></span></div>
-        <div class="hero-sub" id="dash-sub"></div>
+        <div class="hero-info">
+          <div class="hero-label"><span class="live-dot"></span>LIVE მონიტორინგი</div>
+          <div class="hero-health" id="hero-health">…</div>
+          <div class="hero-sub" id="dash-sub"></div>
+        </div>
+        <button id="dash-refresh" class="round-btn" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
       </div>
 
       <div class="tiles pane-hide" id="tiles"></div>

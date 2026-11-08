@@ -65,6 +65,15 @@ def isp_overview(services) -> dict | None:
             "down_now": bool(s["down_now_since"]), "last_speed": tests[-1] if tests else None}
 
 
+def security_overview(services) -> dict:
+    from ..features.secwatch import load
+
+    w = load(services.state)
+    day_ago = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    found = [e for e in (w.get("events") or []) if e["ts"] >= day_ago]
+    return {"ok": not found, "findings_24h": len(found), "checked_at": w.get("checked_at")}
+
+
 def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> FastAPI:
     app = FastAPI(title="NetAgent", docs_url=None, redoc_url=None, openapi_url=None)
     auth_module.ACTIVE = auth  # /sessions and /kick use the running server's session list
@@ -240,6 +249,7 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             "model": settings.model,
             "demo": os.getenv("NETAGENT_DEMO") == "1",
             "isp": await asyncio.to_thread(isp_overview, services),
+            "security": security_overview(services),
         }
 
     # -- commands & chat -----------------------------------------------------------

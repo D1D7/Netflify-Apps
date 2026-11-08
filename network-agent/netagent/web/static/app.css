@@ -716,3 +716,104 @@ button.list-row:active { background: var(--surface-2); }
 .status-pill { transition: box-shadow 0.15s; }
 .hero-value { text-shadow: 0 2px 18px rgba(34, 211, 238, 0.25); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ====================================================================
+   Design 1 "command center": deeper dark palette, ring gauge, stat chips,
+   compact device rows, filled active tab
+   ==================================================================== */
+:root[data-theme="dark"] {
+  --bg: #070b14;
+  --surface: #0f1626;
+  --surface-2: #141d30;
+  --surface-3: #1e2a42;
+  --border: rgba(148, 163, 184, 0.11);
+  --border-strong: rgba(148, 163, 184, 0.2);
+  --topbar-bg: rgba(7, 11, 20, 0.8);
+  --hero: radial-gradient(120% 140% at 100% 0%, rgba(34, 211, 238, 0.22), transparent 55%), linear-gradient(150deg, #0f2236, #0b1322 70%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #070b14; --surface: #0f1626; --surface-2: #141d30; --surface-3: #1e2a42;
+    --border: rgba(148, 163, 184, 0.11); --border-strong: rgba(148, 163, 184, 0.2); --topbar-bg: rgba(7, 11, 20, 0.8);
+    --hero: radial-gradient(120% 140% at 100% 0%, rgba(34, 211, 238, 0.22), transparent 55%), linear-gradient(150deg, #0f2236, #0b1322 70%);
+  }
+}
+
+/* faint grid behind the network view, like a NOC wall */
+#view-dash {
+  background-image: radial-gradient(color-mix(in srgb, var(--text-2) 14%, transparent) 1px, transparent 1.2px);
+  background-size: 18px 18px; background-attachment: local;
+}
+
+/* hero: ring gauge on the left, status on the right */
+.hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 16px; }
+.hero::after { right: -48px; bottom: -56px; width: 170px; height: 170px; opacity: 0.08; }
+.ring-wrap { position: relative; width: 112px; height: 112px; flex: none; }
+.ring { width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
+.ring circle { fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray 0.8s ease, stroke-dashoffset 0.8s ease; }
+.ring-track { stroke: rgba(255, 255, 255, 0.09); }
+.ring-up { stroke: #22d3ee; stroke-dasharray: 0 100; filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.55)); }
+.ring-down { stroke: #f87171; stroke-dasharray: 0 100; }
+.ring-text { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.ring-text .hero-value { font-size: 30px; margin: 0; line-height: 1; }
+.ring-text .hero-value small { font-size: 15px; opacity: 0.65; }
+.ring-cap { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+.hero-info { min-width: 0; display: grid; gap: 4px; }
+.hero-label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #a5f3fc; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #22d3ee; box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.6); animation: live 2s infinite; flex: none; }
+@keyframes live { 70% { box-shadow: 0 0 0 7px rgba(34, 211, 238, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); } }
+.hero-health { font-size: 19px; font-weight: 700; letter-spacing: -0.01em; color: #fff; }
+.hero-health.bad { color: #fecaca; }
+.hero-sub { font-size: 12.5px; color: #94a3b8; flex-direction: column; gap: 1px; }
+.hero-sub .sub-bad { color: #fca5a5; font-weight: 600; }
+.hero-sub .sub-ok { color: #6ee7b7; font-weight: 600; }
+.hero .round-btn { align-self: start; }
+.segbar { display: none; }
+
+/* stat chips */
+.tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tile { text-align: left; padding: 10px 10px 9px; border-radius: 14px; cursor: pointer; font: inherit; color: inherit; }
+.tile-label { font-size: 11.5px; }
+.tile-value { font-size: 18px; margin-top: 3px; }
+.tile.good .tile-value, .tile.good .tile-label .icon { color: var(--accent); }
+.tile.warn .tile-value, .tile.warn .tile-label .icon { color: var(--warning); }
+.tile.bad { border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+@media (hover: hover) { .tile:hover { transform: translateY(-1px); box-shadow: var(--shadow-hover); border-color: var(--border-strong); } }
+.tile:active { transform: scale(0.97); }
+
+/* compact device rows: a glowing status dot instead of an icon tile */
+.devices { gap: 6px; }
+.device { padding: 10px 12px; gap: 10px; border-radius: 12px; }
+.dev-status { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); color: transparent; margin: 0 3px; box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent); }
+.dev-status .icon { display: none; }
+.device.down { background: color-mix(in srgb, var(--critical) 9%, var(--surface)); border-color: color-mix(in srgb, var(--critical) 40%, transparent); }
+.device.down .dev-status { background: var(--critical); box-shadow: 0 0 0 3px var(--critical-soft); animation: pulse 1.8s infinite; }
+.dev-name { font-size: 14.5px; }
+.dev-sub { font-size: 12px; }
+.dev-lat { font-variant-numeric: tabular-nums; color: var(--text-2); font-weight: 600; }
+
+/* quieter section labels */
+.section { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+/* timeline + ISP card: same card language */
+.isp-card, .event { border-radius: 14px; }
+
+/* tab bar: filled pill for the active tab */
+.tabbar button.active .tab-ico { background: var(--accent); color: var(--on-accent); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent); }
+.tabbar button.active { color: var(--text); }
+
+/* status pill in the top bar reads as "live" when all is well */
+.status-pill.ok .dot { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: live 2s infinite; }
+
+@media (max-width: 380px) {
+  .hero { gap: 12px; padding: 14px; }
+  .ring-wrap { width: 96px; height: 96px; }
+  .ring-text .hero-value { font-size: 26px; }
+  .hero-health { font-size: 17px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.app.two-pane[data-view="chat"] #view-dash .ring-wrap { width: 92px; height: 92px; }
+.app.two-pane[data-view="chat"] #view-dash .ring-text .hero-value { font-size: 24px; }
+.app.two-pane[data-view="chat"] #view-dash .hero-health { font-size: 16px; }
+.app.two-pane[data-view="chat"] #view-dash .dev-status { width: 9px; height: 9px; }
+.app.two-pane[data-view="chat"] #view-dash .hero { gap: 12px; padding: 14px; }

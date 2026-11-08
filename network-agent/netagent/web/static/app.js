@@ -72,7 +72,7 @@ function applyTheme(mode) {
 
 function loadTheme() {
   let mode = "auto";
-  try { mode = localStorage.getItem(THEME_KEY) || "auto"; } catch { /* storage unavailable */ }
+  try { mode = localStorage.getItem(THEME_KEY) || "dark"; } catch { /* storage unavailable */ }
   applyTheme(mode);
 }
 
@@ -566,6 +566,7 @@ const EVENT_STYLE = {
   down: ["alert", "red"], up: ["check", "green"], watch: ["pulse", "amber"],
   config: ["note", "violet"], report: ["report", "blue"], syslog: ["file", "amber"], newdevice: ["search", "violet"],
   isp: ["network", "blue"], site: ["network", "violet"], escalation: ["bell", "red"], scheduled: ["report", "gray"],
+  diagnosis: ["sparkle", "blue"], security: ["lock", "red"], presence: ["eye", "gray"],
 };
 
 function renderDevices() {
@@ -615,28 +616,39 @@ function renderOverview() {
   badge.hidden = down === 0;
   badge.textContent = String(down);
 
-  $("#dash-summary").innerHTML = data.total ? `${data.up}<small> / ${data.total}</small>` : "—";
-  const seg = $("#segbar");
-  seg.querySelector(".up").style.flexGrow = String(data.up);
-  seg.querySelector(".down").style.flexGrow = String(down);
-  seg.querySelector(".down").hidden = down === 0;
+  $("#dash-summary").innerHTML = data.total ? `${data.up}<small>/${data.total}</small>` : "—";
+  // ring gauge: cyan arc = reachable share, red arc right after it = unreachable share
+  const pct = data.total ? Math.round((100 * data.up) / data.total) : 0;
+  const gap = data.up && down ? 2 : 0;
+  $("#ring-up").style.strokeDasharray = `${Math.max(pct - gap, 0)} 100`;
+  $("#ring-down").style.strokeDasharray = `${down ? Math.max(100 - pct - gap, 0) : 0} 100`;
+  $("#ring-down").style.strokeDashoffset = `${-pct}`;
+  const health = $("#hero-health");
+  health.textContent = data.total ? `${pct}% ჯანმრთელი` : "მოწყობილობები ჯერ არ არის";
+  health.classList.toggle("bad", down > 0);
   const checked = new Date(data.checked_at).toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" });
-  $("#dash-sub").innerHTML = `<span>${down ? `🔴 ${down} მიუწვდომელი` : "🟢 ყველაფერი რიგზეა"}</span><span>განახლდა ${esc(checked)}</span>`;
+  $("#dash-sub").innerHTML = `<span class="${down ? "sub-bad" : "sub-ok"}">${down ? `${down} გათიშულია` : "ყველაფერი რიგზეა"}</span><span>განახლდა ${esc(checked)}</span>`;
 
   const tiles = $("#tiles");
   tiles.replaceChildren();
-  const tile = (ico, label, value, sub, bad) => {
-    const t = el("div", `tile${bad ? " bad" : ""}`,
+  const tile = (ico, label, value, sub, tone, cmd) => {
+    const t = el("button", `tile${tone ? ` ${tone}` : ""}`,
       `<div class="tile-label">${icon(ico)}<span></span></div><div class="tile-value"></div><div class="tile-sub"></div>`);
+    t.type = "button";
     t.querySelector(".tile-label span").textContent = label;
     t.querySelector(".tile-value").textContent = value;
     t.querySelector(".tile-sub").textContent = sub;
+    if (cmd) t.addEventListener("click", () => send(cmd));
     tiles.appendChild(t);
   };
-  tile("alert", "გათიშული", String(down), "ახლა", down > 0);
-  tile("bell", "ალერტები", String(data.alerts_24h ?? 0), "ბოლო 24 სთ", false);
-  tile("dollar", "AI ხარჯი", `$${data.usage.today.toFixed(2)}`, "დღეს",
-    data.usage.budget > 0 && data.usage.today >= data.usage.budget);
+  const isp = data.isp, sec = data.security;
+  tile("network", "ინტერნეტი", isp?.down_now ? "გათიშ." : isp?.uptime != null ? `${isp.uptime}%` : "—", "24 სთ",
+    isp?.down_now ? "bad" : isp ? "good" : "", "/isp");
+  tile("pulse", "ping", isp?.latency != null ? `${Math.round(isp.latency)} ms` : "—", "ახლა",
+    isp?.latency > 100 ? "warn" : "", "/diagnose ინტერნეტი ნელია");
+  tile("shield", "დაცვა", !sec ? "—" : sec.ok ? "OK" : String(sec.findings_24h), sec && !sec.ok ? "მიგნება 24 სთ" : "ARP · DHCP",
+    !sec ? "" : sec.ok ? "good" : "bad", "/security");
+  tile("bell", "ალერტები", String(data.alerts_24h ?? 0), "24 სთ", data.alerts_24h ? "warn" : "", "/activity");
 
   renderIsp(data.isp);
   $("#dev-search-wrap").hidden = data.devices.length < 8;
