@@ -172,6 +172,29 @@
         <div class="rooms-list" id="rooms-list"></div>
       </div>
 
+      <div class="map-card dz-card pane-hide" id="dz-card">
+        <div class="map-head"><span><svg class="icon"><use href="#i-alert"/></svg>Wi-Fi მკვდარი ზონები</span>
+          <div class="segmented dz-mode" id="dz-mode"><button type="button" data-mode="grid" class="on">რუკა</button><button type="button" data-mode="walk">სიარული</button></div>
+        </div>
+        <div id="dz-grid-pane">
+          <p class="rooms-hint">სახლი წარმოიდგინე ბადედ (ზემოდან ხედი). დადექი ადგილზე და დააჭირე შესაბამის უჯრას — 5 წამიანი ტესტი.</p>
+          <div class="dz-size">ბადე: <select id="dz-cols" aria-label="სვეტები"></select> × <select id="dz-rows" aria-label="რიგები"></select>
+            <button type="button" class="link-btn" id="dz-clear">გასუფთავება</button></div>
+          <div class="dz-grid" id="dz-grid"></div>
+          <div class="dz-legend"><span class="lg-good">კარგი</span><span class="lg-ok">ნორმა</span><span class="lg-weak">სუსტი</span><span class="lg-dead">მკვდარი</span><span class="lg-none">არ გაზომილა</span></div>
+        </div>
+        <div id="dz-walk-pane" hidden>
+          <p class="rooms-hint">იარე სახლში ტელეფონით. სადაც კავშირი ცუდდება, ტელეფონი აზუზუნდება — დააჭირე „მონიშნე“ და დაარქვი სახელი.</p>
+          <div class="dz-walk">
+            <div class="dz-meter" id="dz-meter"><span class="dz-q">—</span><span class="dz-qcap">ხარისხი</span></div>
+            <div class="dz-walk-info"><div id="dz-walk-text">დააჭირე „დაწყებას“</div><svg class="dz-spark" id="dz-spark" viewBox="0 0 120 30" preserveAspectRatio="none"><path/></svg></div>
+          </div>
+          <div class="dz-walk-btns"><button type="button" class="btn primary" id="dz-walk-go">დაწყება</button>
+            <button type="button" class="btn" id="dz-mark" disabled>მონიშნე ეს ადგილი</button></div>
+        </div>
+        <div class="dz-summary" id="dz-summary"></div>
+      </div>
+
       <div class="map-card pane-hide" id="map-card">
         <div class="map-head">
           <span><svg class="icon"><use href="#i-network"/></svg>ქსელის რუკა</span>

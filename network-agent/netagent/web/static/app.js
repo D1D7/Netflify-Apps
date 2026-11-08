@@ -879,6 +879,174 @@ async function loadRooms(highlight = "") {
   }
 }
 
+// ---------------------------------------------------------------- Wi-Fi dead zones (grid map + walk mode)
+
+const dz = { map: null, busy: false, walk: null };
+const netType = () => navigator.connection?.type || "";  // Android Chrome: "wifi" / "cellular"
+
+// one ping to this PC with a time limit; null = lost
+async function pingOnce(limit = 1500) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), limit);
+  const t0 = performance.now();
+  try {
+    const r = await fetch(`/api/lantest/ping?r=${Math.random()}`, { signal: ctrl.signal, credentials: "same-origin", cache: "no-store" });
+    return r.ok ? performance.now() - t0 : null;
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
+async function quickTest(onStep) {
+  const xs = [];
+  for (let i = 0; i < 10; i++) { xs.push(await pingOnce(1000)); onStep?.(i / 10 * 0.45); }
+  const ok = xs.slice(1).filter((x) => x != null);
+  const loss = Math.round((100 * xs.slice(1).filter((x) => x == null).length) / (xs.length - 1));
+  const ping = ok.length ? [...ok].sort((a, b) => a - b)[Math.floor(ok.length / 2)] : null;
+  let down = null;
+  if (loss < 60) {
+    try { down = await lanDown(2.5, (k) => onStep?.(0.45 + k * 0.55)); } catch { down = 0; }
+  }
+  return { ping, loss, down, net: netType() };
+}
+
+function dzCellName(r, c) { return `${String.fromCharCode(65 + c)}${r + 1}`; }
+
+function renderDz() {
+  const m = dz.map;
+  if (!m) return;
+  const opts = (sel, v) => { sel.replaceChildren(...[2, 3, 4, 5, 6, 7, 8].map((n) => Object.assign(el("option"), { value: n, textContent: n, selected: n === v }))); };
+  opts($("#dz-cols"), m.cols);
+  opts($("#dz-rows"), m.rows);
+  const grid = $("#dz-grid");
+  grid.style.gridTemplateColumns = `repeat(${m.cols}, minmax(0, 1fr))`;
+  grid.replaceChildren();
+  for (let r = 0; r < m.rows; r++) {
+    for (let c = 0; c < m.cols; c++) {
+      const cell = m.cells[`${r},${c}`];
+      const b = el("button", `dz-cell ${cell ? `c-${cell.class}` : "c-none"}`);
+      b.type = "button";
+      b.dataset.r = r; b.dataset.c = c;
+      b.innerHTML = `<span class="dz-name">${dzCellName(r, c)}</span><span class="dz-val">${cell ? (cell.class === "dead" ? "☠️" : cell.down != null ? Math.round(cell.down) : "·") : ""}</span>`;
+      b.title = cell ? `${dzCellName(r, c)}: ${cell.down != null ? `${Math.round(cell.down)} Mbps` : "—"} · ping ${cell.ping != null ? Math.round(cell.ping) : "—"} ms · loss ${cell.loss ?? 0}%` : dzCellName(r, c);
+      b.addEventListener("click", () => dzMeasureCell(r, c, b));
+      grid.appendChild(b);
+    }
+  }
+  const dead = Object.entries(m.cells).filter(([, x]) => x.class === "dead").map(([k]) => dzCellName(...k.split(",").map(Number)));
+  const weak = Object.entries(m.cells).filter(([, x]) => x.class === "weak").map(([k]) => dzCellName(...k.split(",").map(Number)));
+  const spots = m.spots.filter((s) => s.class === "dead" || s.class === "weak").map((s) => s.name);
+  const sum = $("#dz-summary");
+  sum.replaceChildren();
+  const line = (cls, text) => sum.appendChild(Object.assign(el("div", `dz-line ${cls}`), { textContent: text }));
+  if (["127.0.0.1", "localhost", "::1"].includes(location.hostname)) {
+    line("note", "ეს გვერდი ამავე კომპიუტერზეა გახსნილი — Wi-Fi-ის გასაზომად ტელეფონიდან გახსენი აპი.");
+  }
+  if (dead.length) line("dead", `☠️ მკვდარი: ${dead.join(", ")}`);
+  if (weak.length) line("weak", `🟠 სუსტი: ${weak.join(", ")}`);
+  if (spots.length) line("weak", `📍 მონიშნული ცუდი ადგილები: ${spots.join(", ")}`);
+  if (Object.keys(m.cells).length && !dead.length && !weak.length && !spots.length) line("ok", "✅ მკვდარი ზონა ჯერ არ ჩანს");
+  if (dead.length || weak.length || spots.length) {
+    const more = el("button", "link-btn");
+    more.type = "button";
+    more.textContent = "რა ეშველება? → /deadzones";
+    more.addEventListener("click", () => { switchView("chat"); send("/deadzones"); });
+    sum.appendChild(more);
+  }
+}
+
+async function loadDz() {
+  try { dz.map = await apiJson("/api/wifimap"); renderDz(); } catch { /* ignore */ }
+}
+
+async function dzPost(what, json) {
+  const r = await apiJson(`/api/wifimap/${what}`, { method: "POST", json });
+  dz.map = r.map;
+  renderDz();
+  return r.result;
+}
+
+async function dzMeasureCell(r, c, btn) {
+  if (dz.busy) { toast("მოიცადე — წინა გაზომვა ჯერ მიმდინარეობს"); return; }
+  dz.busy = true;
+  btn.classList.add("measuring");
+  btn.style.setProperty("--p", "0");
+  try {
+    const res = await quickTest((k) => btn.style.setProperty("--p", String(Math.round(k * 100))));
+    const m = await dzPost("cell", { row: r, col: c, ...res });
+    toast(`${dzCellName(r, c)}: ${m.class === "dead" ? "☠️ მკვდარი ზონა" : m.down != null ? `${Math.round(m.down)} Mbps` : "—"}`);
+    if (m.class === "dead") navigator.vibrate?.([120, 60, 120]);
+  } catch (err) {
+    toast(`გაზომვა ვერ მოხერხდა: ${err.message}`);
+  } finally {
+    dz.busy = false;
+    btn.classList.remove("measuring");
+  }
+}
+
+// walk mode: ping twice a second, show quality, buzz when it gets bad
+function dzQuality(win) {
+  const lost = win.filter((x) => x == null).length;
+  const ok = win.filter((x) => x != null);
+  const med = ok.length ? [...ok].sort((a, b) => a - b)[Math.floor(ok.length / 2)] : 999;
+  const loss = (100 * lost) / Math.max(win.length, 1);
+  let q = 100 - loss * 1.5 - Math.max(0, med - 10) * 0.6;
+  if (netType() === "cellular") q = 0;
+  return { q: Math.max(0, Math.min(100, Math.round(q))), med, loss };
+}
+
+function dzWalkRender(w) {
+  const { q, med, loss } = dzQuality(w.win);
+  const meter = $("#dz-meter");
+  const cls = q >= 75 ? "good" : q >= 50 ? "ok" : q >= 25 ? "weak" : "dead";
+  meter.className = `dz-meter m-${cls}`;
+  meter.style.setProperty("--q", String(q));
+  meter.querySelector(".dz-q").textContent = String(q);
+  $("#dz-walk-text").textContent = netType() === "cellular" ? "📱 Wi-Fi გაითიშა — ტელეფონი მობილურ ინტერნეტზეა"
+    : `ping ${med >= 999 ? "—" : Math.round(med)} ms · დანაკარგი ${Math.round(loss)}%`;
+  const hist = w.hist.slice(-60);
+  const d = hist.map((v, i) => `${i ? "L" : "M"}${(i / 59) * 120},${30 - (v / 100) * 28 - 1}`).join("");
+  $("#dz-spark path").setAttribute("d", d);
+  if (cls === "dead" || cls === "weak") {
+    w.bad += 1;
+    if (w.bad === 3) navigator.vibrate?.(cls === "dead" ? [200, 80, 200, 80, 200] : [150]);
+  } else w.bad = 0;
+  return { q, med, loss };
+}
+
+function dzWalkStart() {
+  const w = { win: [], hist: [], bad: 0, on: true, last: null };
+  dz.walk = w;
+  $("#dz-walk-go").textContent = "გაჩერება";
+  $("#dz-mark").disabled = false;
+  const step = async () => {
+    if (!w.on) return;
+    const v = await pingOnce(1200);
+    if (!w.on) return;
+    w.win = [...w.win.slice(-7), v];  // the last ~4 seconds
+    w.last = dzWalkRender(w);
+    w.hist.push(w.last.q);
+    setTimeout(step, 450);
+  };
+  step();
+}
+
+function dzWalkStop() {
+  if (dz.walk) dz.walk.on = false;
+  dz.walk = null;
+  $("#dz-walk-go").textContent = "დაწყება";
+  $("#dz-mark").disabled = true;
+}
+
+async function dzMark() {
+  const w = dz.walk;
+  if (!w?.last) return;
+  const name = prompt("ამ ადგილის სახელი (მაგ. აივანი, დერეფანი):", "") ?? "";
+  const { med, loss } = w.last;
+  try {
+    const m = await dzPost("spot", { name, ping: med >= 999 ? null : med, loss, net: netType() });
+    toast(`📍 ${m.name}: ${m.class === "dead" ? "☠️ მკვდარი" : m.class === "weak" ? "სუსტი" : "ნორმა"}`);
+  } catch (err) { toast(err.message); }
+}
+
 async function loadOverview() {
   const btn = $("#dash-refresh");
   btn.classList.add("spinning");
@@ -1371,7 +1539,8 @@ function switchView(name) {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const sidePane = applyLayout();
   if (name === "dash" || (sidePane && !state.overview)) loadOverview();
-  if (name === "dash") { loadMap(); loadRooms(); }
+  if (name === "dash") { loadMap(); loadRooms(); loadDz(); }
+  if (name !== "dash") dzWalkStop();
   if (name === "settings") {
     refreshPushUI();
     apiJson("/api/command", { method: "POST", json: { line: "/usage" } })
@@ -1798,6 +1967,18 @@ async function init() {
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
+  document.querySelectorAll("#dz-mode button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("#dz-mode button").forEach((x) => x.classList.toggle("on", x === b));
+    $("#dz-grid-pane").hidden = b.dataset.mode !== "grid";
+    $("#dz-walk-pane").hidden = b.dataset.mode !== "walk";
+    if (b.dataset.mode !== "walk") dzWalkStop();
+  }));
+  const dzSize = () => dzPost("size", { cols: Number($("#dz-cols").value), rows: Number($("#dz-rows").value) }).catch((e) => toast(e.message));
+  $("#dz-cols").addEventListener("change", dzSize);
+  $("#dz-rows").addEventListener("change", dzSize);
+  $("#dz-clear").addEventListener("click", () => { if (confirm("გავასუფთავო მკვდარი ზონების რუკა?")) dzPost("clear", {}).catch(() => {}); });
+  $("#dz-walk-go").addEventListener("click", () => (dz.walk ? dzWalkStop() : dzWalkStart()));
+  $("#dz-mark").addEventListener("click", dzMark);
   $("#rooms-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const room = $("#room-name").value.trim();

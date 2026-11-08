@@ -51,7 +51,18 @@ const EN = {
   "✅ ყველა მოწყობილობა ხელმისაწვდომია": "✅ All devices are reachable", "ვერაფერი მოიძებნა": "Nothing found",
   "მიუწვდომელი · timeout": "Unreachable · timeout", "მიუწვდომელი": "Unreachable", "მოწყობილობები ჯერ არ არის": "No devices yet",
   "ყველაფერი რიგზეა": "All good", "გათიშ.": "Down", "24 სთ": "24 h", "ახლა": "Now", "მიგნება 24 სთ": "Findings 24 h",
-  "ალერტები": "Alerts", "Wi-Fi ოთახებში": "Wi-Fi by room", "გაზომე აქ": "Measure here", "ვინახავ...": "Saving...",
+  "ალერტები": "Alerts", "Wi-Fi მკვდარი ზონები": "Wi-Fi dead zones", "სიარული": "Walk", "ბადე:": "Grid:",
+  "გასუფთავება": "Clear", "კარგი": "Good", "ნორმა": "OK", "სუსტი": "Weak", "მკვდარი": "Dead", "არ გაზომილა": "Not measured",
+  "ხარისხი": "Quality", "დაწყება": "Start", "გაჩერება": "Stop", "მონიშნე ეს ადგილი": "Mark this spot",
+  "დააჭირე „დაწყებას“": "Press Start", "სვეტები": "Columns", "რიგები": "Rows", "რა ეშველება? → /deadzones": "How to fix? → /deadzones",
+  "✅ მკვდარი ზონა ჯერ არ ჩანს": "✅ No dead zone so far", "📱 Wi-Fi გაითიშა — ტელეფონი მობილურ ინტერნეტზეა": "📱 Wi-Fi lost: the phone is on mobile data",
+  "მოიცადე — წინა გაზომვა ჯერ მიმდინარეობს": "Wait: the previous test is still running",
+  "გავასუფთავო მკვდარი ზონების რუკა?": "Clear the dead zone map?",
+  "ამ ადგილის სახელი (მაგ. აივანი, დერეფანი):": "Name of this spot (e.g. balcony, hallway):",
+  "სახლი წარმოიდგინე ბადედ (ზემოდან ხედი). დადექი ადგილზე და დააჭირე შესაბამის უჯრას — 5 წამიანი ტესტი.":
+    "Picture your home as a grid (seen from above). Stand somewhere and tap that square: a 5-second test.",
+  "იარე სახლში ტელეფონით. სადაც კავშირი ცუდდება, ტელეფონი აზუზუნდება — დააჭირე „მონიშნე“ და დაარქვი სახელი.":
+    "Walk around with the phone. Where the connection gets bad it vibrates: press \"Mark\" and name the spot.", "Wi-Fi ოთახებში": "Wi-Fi by room", "გაზომე აქ": "Measure here", "ვინახავ...": "Saving...",
   "ოთახი, მაგ. საძინებელი": "Room, e.g. bedroom",
   "ტელეფონით გაიარე ოთახები და თითოეულში დააჭირე „გაზომე აქ“ — ნახავ, სად არის Wi-Fi სუსტი.":
     "Walk through the rooms with your phone and press \"Measure here\" in each: you will see where Wi-Fi is weak.",
@@ -135,6 +146,9 @@ const PATTERNS = [
   [/^ამ თვეში: (.+)$/, "This month: $1"], [/^დღიური ლიმიტი: (\S+) \(დარჩა (\S+)\)$/, "Daily limit: $1 ($2 left)"],
   [/^ჩამოტვირთვა \(download\): (.+)$/, "Download: $1"], [/^ატვირთვა \(upload\): (.+)$/, "Upload: $1"],
   [/^ატვირთვა \(upload\) (.+)$/, "Upload $1"], [/^გაზომვა ვერ მოხერხდა: (.+)$/, "Measurement failed: $1"],
+  [/^ping (.+) ms · დანაკარგი (.+)%$/, "ping $1 ms · loss $2%"], [/^☠️ მკვდარი: (.+)$/, "☠️ Dead: $1"],
+  [/^🟠 სუსტი: (.+)$/, "🟠 Weak: $1"], [/^📍 მონიშნული ცუდი ადგილები: (.+)$/, "📍 Marked bad spots: $1"],
+  [/^(.+): ☠️ მკვდარი ზონა$/, "$1: ☠️ dead zone"],
   [/^(\d+) წმ$/, "$1 s"], [/^(\d+) წთ$/, "$1 min"], [/^(\d+) სთ$/, "$1 h"],
 ];
 

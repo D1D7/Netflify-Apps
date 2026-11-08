@@ -470,6 +470,36 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True, "entry": entry}
 
+    # -- Wi-Fi dead zones (grid map + walk spots) --------------------------------------------------
+    @app.get("/api/wifimap")
+    async def wifimap_get():
+        from ..features.deadzones import load
+
+        return await asyncio.to_thread(load, services.state)
+
+    @app.post("/api/wifimap/{what}")
+    async def wifimap_post(what: str, request: Request):
+        from ..features import deadzones as dz
+        from ..result import CommandError
+
+        body = await _json(request)
+        try:
+            if what == "cell":
+                m = await asyncio.to_thread(dz.save_cell, services.state, body.get("row"), body.get("col"), body)
+            elif what == "spot":
+                m = await asyncio.to_thread(dz.save_spot, services.state, body.get("name", ""), body)
+            elif what == "size":
+                m = await asyncio.to_thread(dz.set_size, services.state, body.get("cols"), body.get("rows"))
+            elif what == "clear":
+                v = dz.load(services.state)
+                m = dz.blank(v["cols"], v["rows"])
+                await asyncio.to_thread(services.state.set, dz.KEY, m)
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "result": m, "map": await asyncio.to_thread(dz.load, services.state)}
+
     @app.get("/api/topology")
     async def topology_map(refresh: int = 0):
         from ..features.livemap import build_map
