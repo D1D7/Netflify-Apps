@@ -160,6 +160,18 @@
 
       <div class="isp-card" id="isp-card" hidden></div>
 
+      <div class="map-card rooms-card pane-hide" id="rooms-card">
+        <div class="map-head"><span><svg class="icon"><use href="#i-radar"/></svg>Wi-Fi ოთახებში</span></div>
+        <p class="rooms-hint">ტელეფონით გაიარე ოთახები და თითოეულში დააჭირე „გაზომე აქ“ — ნახავ, სად არის Wi-Fi სუსტი.</p>
+        <form class="rooms-form" id="rooms-form">
+          <input id="room-name" list="room-names" maxlength="40" placeholder="ოთახი, მაგ. საძინებელი" autocomplete="off" required>
+          <datalist id="room-names"></datalist>
+          <button type="submit" class="btn primary" id="room-go">გაზომე აქ</button>
+        </form>
+        <div class="rooms-progress" id="rooms-progress" hidden><div class="rp-bar"><span></span></div><div class="rp-text"></div></div>
+        <div class="rooms-list" id="rooms-list"></div>
+      </div>
+
       <div class="map-card pane-hide" id="map-card">
         <div class="map-head">
           <span><svg class="icon"><use href="#i-network"/></svg>ქსელის რუკა</span>

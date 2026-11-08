@@ -560,7 +560,9 @@ const QUICK = [
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
   ["lock", "red", "დაცვა", "/security"],
+  ["sparkle", "green", "ქსელის ქულა", "/score"],
   ["radar", "blue", "Wi-Fi არხები", "/wifiscan"],
+  ["radar", "violet", "Wi-Fi ოთახებში", "/rooms"],
   ["pulse", "amber", "Bufferbloat", "/bufferbloat"],
   ["network", "violet", "სერვისები", "/services"],
   ["shield", "green", "DNS ბლოკი", "/dns"],
@@ -767,6 +769,114 @@ function renderIsp(isp) {
   card.querySelector(".isp-sub").textContent = `${isp.latency != null ? `${isp.latency} ms` : ""} · გათიშვები 24 სთ: ${isp.outages} · ${speed}`;
   card.dataset.drawn = "1";
   card.onclick = () => send("/isp");
+}
+
+// ---------------------------------------------------------------- Wi-Fi room by room (phone -> this PC)
+
+function roomsProgress(pct, text) {
+  const box = $("#rooms-progress");
+  box.hidden = pct == null;
+  if (pct == null) return;
+  box.querySelector(".rp-bar span").style.width = `${pct}%`;
+  box.querySelector(".rp-text").textContent = text;
+}
+
+async function lanPing(n = 12) {
+  const xs = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    await api(`/api/lantest/ping?r=${Math.random()}`);
+    xs.push(performance.now() - t0);
+  }
+  xs.shift();  // the first one also opens the connection
+  const sorted = [...xs].sort((a, b) => a - b);
+  const jitter = xs.slice(1).reduce((s, x, i) => s + Math.abs(x - xs[i]), 0) / Math.max(xs.length - 1, 1);
+  return { ping: sorted[Math.floor(sorted.length / 2)], jitter };
+}
+
+async function lanDown(seconds = 6, onProgress) {
+  const ctrl = new AbortController();
+  const res = await fetch(`/api/lantest/down?mb=64&r=${Math.random()}`, { signal: ctrl.signal, credentials: "same-origin" });
+  const reader = res.body.getReader();
+  let bytes = 0, t0 = 0;
+  const start = performance.now();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!t0) { t0 = performance.now(); continue; }  // start the clock at the first chunk
+      bytes += value.length;
+      const el = (performance.now() - t0) / 1000;
+      onProgress?.(Math.min(1, (performance.now() - start) / 1000 / seconds), (bytes * 8) / el / 1e6);
+      if (el > seconds) break;
+    }
+  } finally {
+    ctrl.abort();
+  }
+  return (bytes * 8) / Math.max((performance.now() - t0) / 1000, 0.001) / 1e6;
+}
+
+async function lanUp(seconds = 5, onProgress) {
+  const chunk = new Uint8Array(4 * 1024 * 1024);
+  crypto.getRandomValues(chunk.subarray(0, 65536));
+  let bytes = 0;
+  const t0 = performance.now();
+  while ((performance.now() - t0) / 1000 < seconds) {
+    await fetch("/api/lantest/up", { method: "POST", body: chunk, headers: { "X-NetAgent": "1" }, credentials: "same-origin" });
+    bytes += chunk.length;
+    const el = (performance.now() - t0) / 1000;
+    onProgress?.(Math.min(1, el / seconds), (bytes * 8) / el / 1e6);
+  }
+  return (bytes * 8) / ((performance.now() - t0) / 1000) / 1e6;
+}
+
+async function measureRoom(room) {
+  const btn = $("#room-go");
+  btn.disabled = true;
+  try {
+    roomsProgress(3, "ping...");
+    const { ping, jitter } = await lanPing();
+    const down = await lanDown(6, (k, mbps) => roomsProgress(5 + k * 55, `ჩამოტვირთვა (download): ${mbps.toFixed(0)} Mbps`));
+    const up = await lanUp(5, (k, mbps) => roomsProgress(60 + k * 38, `ატვირთვა (upload): ${mbps.toFixed(0)} Mbps`));
+    roomsProgress(100, "ვინახავ...");
+    await apiJson("/api/rooms", { method: "POST", json: { room, down, up, ping, jitter } });
+    toast(`📍 ${room}: ${down.toFixed(0)} Mbps`);
+    await loadRooms(room);
+  } catch (err) {
+    toast(`გაზომვა ვერ მოხერხდა: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => roomsProgress(null), 600);
+  }
+}
+
+const ROOM_TONE = (r) => (r.down == null ? "bad" : r.down >= 40 && (r.ping ?? 0) < 30 ? "good" : r.down >= 15 ? "warn" : "bad");
+
+async function loadRooms(highlight = "") {
+  let data;
+  try { data = await apiJson("/api/rooms"); } catch { return; }
+  const list = $("#rooms-list");
+  list.replaceChildren();
+  $("#room-names").replaceChildren(...data.rooms.map((r) => Object.assign(el("option"), { value: r.room })));
+  const local = ["127.0.0.1", "localhost", "::1"].includes(location.hostname);
+  if (local) list.appendChild(Object.assign(el("div", "rooms-note"), { textContent: "ეს გვერდი ამავე კომპიუტერზეა გახსნილი — Wi-Fi-ის გასაზომად ტელეფონიდან გახსენი აპი." }));
+  const best = Math.max(1, ...data.rooms.map((r) => r.down || 0));
+  for (const r of data.rooms) {
+    const row = el("div", `room-row ${ROOM_TONE(r)}${r.room === highlight ? " is-new" : ""}`,
+      `<div class="room-top"><span class="room-name"></span><span class="room-val"></span></div>
+       <div class="room-bar"><span></span></div><div class="room-sub"></div>`);
+    row.querySelector(".room-name").textContent = r.room;
+    row.querySelector(".room-val").textContent = r.down != null ? `${Math.round(r.down)} Mbps` : "—";
+    row.querySelector(".room-sub").textContent = `ატვირთვა (upload) ${r.up != null ? Math.round(r.up) : "—"} Mbps · ping ${r.ping != null ? r.ping.toFixed(0) : "—"} ms`;
+    list.appendChild(row);
+    requestAnimationFrame(() => { row.querySelector(".room-bar span").style.width = `${Math.max(3, (100 * (r.down || 0)) / best)}%`; });
+    setTimeout(() => { row.querySelector(".room-bar span").style.width = `${Math.max(3, (100 * (r.down || 0)) / best)}%`; }, 300);
+  }
+  for (const a of data.advice) {
+    const n = el("div", "rooms-advice");
+    n.innerHTML = inline(a);
+    list.appendChild(n);
+  }
 }
 
 async function loadOverview() {
@@ -1261,7 +1371,7 @@ function switchView(name) {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const sidePane = applyLayout();
   if (name === "dash" || (sidePane && !state.overview)) loadOverview();
-  if (name === "dash") loadMap();
+  if (name === "dash") { loadMap(); loadRooms(); }
   if (name === "settings") {
     refreshPushUI();
     apiJson("/api/command", { method: "POST", json: { line: "/usage" } })
@@ -1688,6 +1798,11 @@ async function init() {
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
+  $("#rooms-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const room = $("#room-name").value.trim();
+    if (room) measureRoom(room);
+  });
   document.querySelectorAll("#dev-filter button").forEach((b) => b.addEventListener("click", () => {
     state.devFilter = b.dataset.filter;
     document.querySelectorAll("#dev-filter button").forEach((x) => x.classList.toggle("on", x === b));

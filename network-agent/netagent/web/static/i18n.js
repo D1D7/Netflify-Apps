@@ -42,7 +42,7 @@ const EN = {
   "დიაგნოსტიკა": "Diagnose", "ინტერნეტი": "Internet", "ქსელის სკანი": "Network scan", "ჟურნალი": "Activity",
   "რეპორტი": "Report", "აუდიტი": "Audit", "დაცვა": "Security", "ქვიზი": "Quiz", "რუკა": "Map", "ლოგები": "Logs",
   "შენიშვნები": "Notes", "ბრძანებები": "Commands", "დემო სცენარები": "Demo scenarios", "Wi-Fi არხები": "Wi-Fi channels",
-  "სერვისები": "Services", "DNS ბლოკი": "DNS blocking", "დილის შეჯამება": "Morning summary",
+  "სერვისები": "Services", "ქსელის ქულა": "Network score", "DNS ბლოკი": "DNS blocking", "დილის შეჯამება": "Morning summary",
   // network tab
   "სრულად": "Full view", "ონლაინ": "online", "LIVE მონიტორინგი": "LIVE monitoring", "ქსელის რუკა": "Network map",
   "კაბელების განახლება": "Rediscover cables", "გათიშული": "down", "გარე მეზობელი": "External neighbour",
@@ -51,7 +51,12 @@ const EN = {
   "✅ ყველა მოწყობილობა ხელმისაწვდომია": "✅ All devices are reachable", "ვერაფერი მოიძებნა": "Nothing found",
   "მიუწვდომელი · timeout": "Unreachable · timeout", "მიუწვდომელი": "Unreachable", "მოწყობილობები ჯერ არ არის": "No devices yet",
   "ყველაფერი რიგზეა": "All good", "გათიშ.": "Down", "24 სთ": "24 h", "ახლა": "Now", "მიგნება 24 სთ": "Findings 24 h",
-  "ალერტები": "Alerts", "მართვადი მოწყობილობები ჯერ არ არის.": "No managed devices yet.",
+  "ალერტები": "Alerts", "Wi-Fi ოთახებში": "Wi-Fi by room", "გაზომე აქ": "Measure here", "ვინახავ...": "Saving...",
+  "ოთახი, მაგ. საძინებელი": "Room, e.g. bedroom",
+  "ტელეფონით გაიარე ოთახები და თითოეულში დააჭირე „გაზომე აქ“ — ნახავ, სად არის Wi-Fi სუსტი.":
+    "Walk through the rooms with your phone and press \"Measure here\" in each: you will see where Wi-Fi is weak.",
+  "ეს გვერდი ამავე კომპიუტერზეა გახსნილი — Wi-Fi-ის გასაზომად ტელეფონიდან გახსენი აპი.":
+    "This page is open on the PC itself: open the app on your phone to measure Wi-Fi.", "მართვადი მოწყობილობები ჯერ არ არის.": "No managed devices yet.",
   "როცა როუტერს ან switch-ს ქსელში შეაერთებ, თავისით ამოვიცნობ და აქ გამოჩნდება.":
     "Plug a router or switch into the network and it will be detected and shown here.", "მოვლენები ჯერ არ ყოფილა.": "No events yet.", "სიჩქარე: /speedtest": "Speed: /speedtest",
   "🔴 არ არის": "🔴 Down", "კაბელები განახლდა": "Cables rediscovered",
@@ -128,6 +133,8 @@ const PATTERNS = [
   [/^თუ ეს შენ\/თქვენ არ ხართ: (.+)$/, "If this was not you: $1"],
   [/^დღეს: (\S+) — (\d+) მოთხოვნა$/, "Today: $1 · $2 requests"], [/^გუშინ: (.+)$/, "Yesterday: $1"],
   [/^ამ თვეში: (.+)$/, "This month: $1"], [/^დღიური ლიმიტი: (\S+) \(დარჩა (\S+)\)$/, "Daily limit: $1 ($2 left)"],
+  [/^ჩამოტვირთვა \(download\): (.+)$/, "Download: $1"], [/^ატვირთვა \(upload\): (.+)$/, "Upload: $1"],
+  [/^ატვირთვა \(upload\) (.+)$/, "Upload $1"], [/^გაზომვა ვერ მოხერხდა: (.+)$/, "Measurement failed: $1"],
   [/^(\d+) წმ$/, "$1 s"], [/^(\d+) წთ$/, "$1 min"], [/^(\d+) სთ$/, "$1 h"],
 ];
 

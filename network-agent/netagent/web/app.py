@@ -415,6 +415,61 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         log_event(settings.audit_log_path, user=request.state.who, tool="live_trust", args={"key": key, "trusted": bool(body.get("trusted", True))}, ok=True)
         return {"ok": True}
 
+    # -- Wi-Fi room test: the phone measures against this PC ------------------------------------
+    _blob = os.urandom(256 * 1024)  # random, so nothing on the way can compress it
+
+    @app.get("/api/lantest/ping")
+    async def lantest_ping():
+        return {"ok": True}
+
+    @app.get("/api/lantest/down")
+    async def lantest_down(mb: int = 16):
+        from fastapi.responses import StreamingResponse
+
+        from ..features.rooms import MAX_TEST_MB
+
+        total = max(1, min(mb, MAX_TEST_MB)) * 1024 * 1024
+
+        async def body():
+            sent = 0
+            while sent < total:
+                chunk = _blob[: min(len(_blob), total - sent)]
+                sent += len(chunk)
+                yield chunk
+
+        return StreamingResponse(body(), media_type="application/octet-stream",
+                                 headers={"Content-Length": str(total), "Content-Encoding": "identity"})
+
+    @app.post("/api/lantest/up")
+    async def lantest_up(request: Request):
+        from ..features.rooms import MAX_TEST_MB
+
+        got = 0
+        async for chunk in request.stream():
+            got += len(chunk)
+            if got > MAX_TEST_MB * 1024 * 1024:
+                return JSONResponse({"error": "too large"}, status_code=413)
+        return {"bytes": got}
+
+    @app.get("/api/rooms")
+    async def rooms_list():
+        from ..features.rooms import advice, summary
+
+        rows = await asyncio.to_thread(summary, services.state)
+        return {"rooms": rows, "advice": advice(rows)}
+
+    @app.post("/api/rooms")
+    async def rooms_save(request: Request):
+        from ..features.rooms import save
+        from ..result import CommandError
+
+        body = await _json(request)
+        try:
+            entry = await asyncio.to_thread(save, services.state, body.get("room", ""), body, request.state.who)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "entry": entry}
+
     @app.get("/api/topology")
     async def topology_map(refresh: int = 0):
         from ..features.livemap import build_map

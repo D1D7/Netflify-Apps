@@ -105,6 +105,17 @@ def build(s, hours: float = 12, now: datetime | None = None, live=None) -> str:
     except Exception:  # noqa: BLE001
         pass
 
+    # network score
+    try:
+        from .score import gather, label, remember
+
+        sc = gather(s)
+        before = remember(s.state, sc.value)
+        trend = f" ({'▲' if sc.value > before else '▼'} {abs(sc.value - before)})" if before not in (None, sc.value) else ""
+        lines.append(f"🏆 ქსელის ქულა: **{sc.value}/100** {label(sc.value)}{trend} — /score")
+    except Exception:  # noqa: BLE001
+        pass
+
     if len(lines) == 1:
         lines.append("ჯერ მონაცემი არ დაგროვდა — ხვალ დილით უკვე სრული შეჯამება მოვა.")
     return "\n".join(lines)
