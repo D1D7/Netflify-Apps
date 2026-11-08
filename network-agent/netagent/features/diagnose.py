@@ -495,7 +495,7 @@ def internet_chain(d: Diagnosis, s, p: Probes, inv, devices: list, slow: bool = 
         if tests:
             t = tests[-1]
             speed_low = bool(plan) and t["down_mbps"] < plan * 0.5
-            d.add("სიჩქარე", WARN if speed_low else OK, f"ბოლო ტესტი ({t['ts'][5:16].replace('T', ' ')}): ჩამოტვირთვა {t['down_mbps']} · ატვირთვა {t['up_mbps']} Mbit/s"
+            d.add("სიჩქარე", WARN if speed_low else OK, f"ბოლო ტესტი ({t['ts'][5:16].replace('T', ' ')}): ჩამოტვირთვა {t['down_mbps']} · ატვირთვა {t['up_mbps']} Mbps"
                   + (f" — ტარიფის {round(100 * t['down_mbps'] / plan)}%" if plan else ""))
         d.buttons.append(Button("⚡ სიჩქარის ტესტი ახლა", "/speedtest"))
 

@@ -202,10 +202,10 @@ def utilization(i: dict) -> float | None:
 def human_bps(v: float | None) -> str:
     if v is None:
         return "—"
-    for unit, div in (("Gbit/s", 1e9), ("Mbit/s", 1e6), ("kbit/s", 1e3)):
+    for unit, div in (("Gbps", 1e9), ("Mbps", 1e6), ("kbps", 1e3)):
         if v >= div:
             return f"{v / div:.1f} {unit}"
-    return f"{int(v)} bit/s"
+    return f"{int(v)} bps"
 
 
 def analyze(device, sample: dict, deltas: dict) -> list[str]:
@@ -265,7 +265,7 @@ def chart(name: str, interface: str, rows, path: Path) -> Path | None:
     bw = next((r[3] for r in rows if r[3]), None)
     if bw:
         ax.axhline(bw / 1e6, color="#e5484d", lw=1, ls="--", label="სიჩქარე")
-    ax.set_ylabel("Mbit/s")
+    ax.set_ylabel("Mbps")
     ax.set_title(f"{name} {interface} — ტრაფიკი", fontsize=10, loc="left")
     ax.grid(alpha=0.25)
     ax.legend(fontsize=8, frameon=False)

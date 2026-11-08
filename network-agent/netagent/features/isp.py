@@ -201,8 +201,8 @@ def format_summary(r: dict) -> str:
                      + f" · packet loss {r['loss_avg_percent']}%")
     if r.get("down_avg_mbps") is not None:
         last = r["speedtests"][-1]
-        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} · ატვირთვა {r['up_avg_mbps']} Mbit/s")
-        lines.append(f"ბოლო ტესტი: ჩამოტვირთვა {last['down_mbps']} · ატვირთვა {last['up_mbps']} Mbit/s"
+        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} · ატვირთვა {r['up_avg_mbps']} Mbps")
+        lines.append(f"ბოლო ტესტი: ჩამოტვირთვა {last['down_mbps']} · ატვირთვა {last['up_mbps']} Mbps"
                      + (f" · {last['isp']}" if last.get("isp") else ""))
     for o in r["outages"][-8:]:
         lines.append(f"• {o['start'][5:16].replace('T', ' ')} → {o['end'][11:16]} ({_fmt_dur(o['seconds'])})")
@@ -220,10 +220,10 @@ def format_report(r: dict, plan_mbps: int = 0) -> str:
     if r["latency_avg_ms"] is not None:
         lines.append(f"საშუალო დაყოვნება: {r['latency_avg_ms']} ms, დანაკარგი: {r['loss_avg_percent']}%")
     if r.get("down_avg_mbps") is not None:
-        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} Mbit/s, ატვირთვა {r['up_avg_mbps']} Mbit/s, "
-                     f"მინიმალური ჩამოტვირთვა {r['down_min_mbps']} Mbit/s")
+        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} Mbps, ატვირთვა {r['up_avg_mbps']} Mbps, "
+                     f"მინიმალური ჩამოტვირთვა {r['down_min_mbps']} Mbps")
         if plan_mbps:
-            lines.append(f"ტარიფი: {plan_mbps} Mbit/s → საშუალოდ მიღებულია {round(100 * r['down_avg_mbps'] / plan_mbps)}%")
+            lines.append(f"ტარიფი: {plan_mbps} Mbps → საშუალოდ მიღებულია {round(100 * r['down_avg_mbps'] / plan_mbps)}%")
     if r["outages"]:
         lines += ["", "გათიშვების სია:"]
         lines += [f"• {o['start'].replace('T', ' ')} — {o['end'].replace('T', ' ')} ({_fmt_dur(o['seconds'])})" for o in r["outages"]]
@@ -266,8 +266,8 @@ def speedtest_cmd(s, args, user) -> Result:
     except Exception as exc:  # noqa: BLE001
         raise CommandError(f"სიჩქარის ტესტი ვერ შესრულდა ({type(exc).__name__}: {exc})") from None
     lines = ["⚡ **ინტერნეტის სიჩქარე**",
-             f"ჩამოტვირთვა (download): **{t['down_mbps']}** Mbit/s",
-             f"ატვირთვა (upload): **{t['up_mbps']}** Mbit/s",
+             f"ჩამოტვირთვა (download): **{t['down_mbps']}** Mbps",
+             f"ატვირთვა (upload): **{t['up_mbps']}** Mbps",
              f"დაყოვნება (ping): {t['ping_ms']} ms"]
     if t.get("isp"):
         lines.append(f"პროვაიდერი: {t['isp']}" + (f", {t['city']}" if t.get("city") else ""))
@@ -318,7 +318,7 @@ def jobs(monitoring):
             t = await asyncio.to_thread(m.speedtest)
             low = env_int("NETAGENT_ISP_PLAN_MBPS", 0)
             if low and t["down_mbps"] < low * 0.5:
-                await monitoring.emit(Alert("isp", f"🐢 **ინტერნეტი ნელია:** ჩამოტვირთვა {t['down_mbps']} Mbit/s "
+                await monitoring.emit(Alert("isp", f"🐢 **ინტერნეტი ნელია:** ჩამოტვირთვა {t['down_mbps']} Mbps "
                                                    f"(ტარიფი {low}, ანუ {round(100 * t['down_mbps'] / low)}%)", mutable=False))
         out.append(("speedtest", hours * 3600, 600, speed))
     return out

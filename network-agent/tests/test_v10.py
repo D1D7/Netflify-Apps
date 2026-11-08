@@ -37,7 +37,7 @@ def test_congestion_and_mikrotik_stats():
     assert mt["ether1"]["status"] == "up" and mt["ether1"]["rx_bytes"] > 0
     assert ifstats.parse_memory("mikrotik", "free-memory: 256.0MiB\ntotal-memory: 1024.0MiB") == 75.0
     assert ifstats.parse_memory("ios", "Processor Pool Total:  1000 Used:  250 Free: 750") == 25.0
-    assert ifstats.human_bps(962_000_000) == "962.0 Mbit/s"
+    assert ifstats.human_bps(962_000_000) == "962.0 Mbps"
 
 
 # -- firewall -----------------------------------------------------------------------------------

@@ -111,7 +111,7 @@ def wifi(s, args) -> RunbookResult:
         sig = int(re.sub(r"\D", "", info["signal"] or "0") or 0)
         rb.add(OK if sig >= 60 else WARN if sig >= 40 else FAIL,
                f"სიგნალი: {sig}% ({info['ssid']}, არხი {info['channel']}, {info.get('band') or info.get('radio') or ''})")
-        rb.add(OK, f"კავშირის სიჩქარე როუტერთან: მიღება {info['rx']} · გაგზავნა {info['tx']} Mbit/s")
+        rb.add(OK, f"კავშირის სიჩქარე როუტერთან: მიღება {info['rx']} · გაგზავნა {info['tx']} Mbps")
         if sig < 50:
             verdict.append("სიგნალი სუსტია — როუტერთან ახლოს მიდი, ან დაამატე წვდომის წერტილი/mesh")
         if info.get("channel") and info["channel"].isdigit() and int(info["channel"]) <= 14:
