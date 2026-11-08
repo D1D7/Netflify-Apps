@@ -1113,3 +1113,18 @@ button.list-row:active { background: var(--surface-2); }
   .tl[data-s] { font-size: 0; }
   .tl[data-s]::after { content: attr(data-s); font-size: 10.5px; }
 }
+
+/* ---- RAM test ---- */
+.mt-card { margin-top: 10px; }
+.mt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; }
+.mt-hint { font-size: 12.5px; color: var(--text-2); margin: 6px 0 10px; }
+.mt-bar { height: 9px; }
+.mt-bar span { background: linear-gradient(90deg, var(--accent), #818cf8); transition: width 0.6s linear; }
+.mt-line { font-size: 12.5px; color: var(--text-2); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.mt-result { display: grid; gap: 4px; font-size: 13px; margin: 4px 0 2px; }
+.mt-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mt-btns .btn { flex: 1 1 140px; }
+.mt-reboot { margin-top: 12px; font-size: 12.5px; color: var(--text-2); }
+.mt-reboot summary { cursor: pointer; font-weight: 600; color: var(--text); }
+.mt-reboot p { margin: 6px 0 8px; }
+.mt-card .hw-badge:not(.s-ok):not(.s-bad):not(.s-warn) { background: var(--accent-soft); color: var(--accent-strong); }

@@ -1123,6 +1123,12 @@ function renderHw(d) {
     card.querySelector(".hw-mods").appendChild(row);
   }
   for (const w of r.why) card.querySelector(".hw-why").appendChild(Object.assign(el("div", "hw-warn"), { textContent: `⚠️ ${w}` }));
+  if (r.diag) {
+    const when = new Date(r.diag.ts).toLocaleDateString("ka-GE");
+    card.querySelector(".hw-why").appendChild(Object.assign(el("div", r.diag.id === 1202 ? "hw-warn" : "hw-info"), {
+      textContent: r.diag.id === 1202 ? `🔴 Windows Memory Diagnostic (${when}): შეცდომა იპოვა` : `✅ Windows Memory Diagnostic (${when}): შეცდომა არ არის`,
+    }));
+  }
   card.querySelector(".hw-why").appendChild(Object.assign(el("div", "hw-info"), {
     textContent: r.whea_30d ? `აპარატურული შეცდომები 30 დღეში: ${r.whea_30d}` : "✅ აპარატურული შეცდომა ბოლო 30 დღეში არ ყოფილა",
   }));
@@ -1142,6 +1148,60 @@ async function loadHw(refresh = false) {
   } finally {
     btn.classList.remove("spinning");
   }
+}
+
+// ---------------------------------------------------------------- RAM test (inside Windows)
+
+let mtTimer = null;
+const MT_TEST = { "0x00…": "ნულები", "0xFF…": "ერთიანები", "0x55…": "ჭადრაკი", "0xAA…": "ჭადრაკი (შებრუნებული)",
+  "own address": "საკუთარი მისამართი", "inverted address": "შებრუნებული მისამართი", "random": "შემთხვევითი",
+  "moving inversions ↑": "მოძრავი ინვერსია ↑", "moving inversions ↓": "მოძრავი ინვერსია ↓" };
+
+function mtTestName(n) {
+  if (!n) return "";
+  if (n.startsWith("walking 1")) return `მოძრავი ბიტი ${n.split("bit ")[1] ?? ""}`;
+  return MT_TEST[n] || n;
+}
+
+function renderMemtest(st) {
+  const running = st.status === "starting" || st.status === "running";
+  $("#mt-run").hidden = !running;
+  $("#mt-stop").hidden = !running;
+  $("#mt-quick").disabled = running;
+  $("#mt-full").disabled = running;
+  const badge = $("#mt-badge");
+  const res = $("#mt-result");
+  res.replaceChildren();
+  const gb = st.mb ? `${(st.mb / 1024).toFixed(1)} GB` : "";
+  if (running) {
+    $("#mt-run .hw-bar span").style.width = `${st.progress || 0}%`;
+    $("#mt-line").textContent = `${Math.round(st.progress || 0)}% · გავლა ${st.current_pass || 1}/${st.passes} · ${mtTestName(st.test)} · ${gb} (~${st.coverage_pct ?? "?"}%) · შეცდომა: ${st.errors || 0}`;
+    badge.hidden = false; badge.className = "hw-badge"; badge.textContent = "მიმდინარეობს";
+  } else if (st.status) {
+    const map = { passed: ["s-ok", "გაიარა"], failed: ["s-bad", "შეცდომებია"], stopped: ["s-warn", "შეჩერდა"], error: ["s-warn", "ვერ დაიწყო"] };
+    const [cls, word] = map[st.status] || ["", st.status];
+    badge.hidden = false; badge.className = `hw-badge ${cls}`; badge.textContent = word;
+    const when = st.finished ? new Date(st.finished).toLocaleString("ka-GE", { dateStyle: "short", timeStyle: "short" }) : "";
+    const lines = [];
+    if (st.status === "passed") lines.push(`✅ ${gb} შემოწმდა ${st.passes} გავლით — შეცდომა არ არის`);
+    if (st.status === "failed") lines.push(`🔴 ${st.errors} შეცდომა ${gb}-ში — RAM სავარაუდოდ დაზიანებულია`);
+    if (st.status === "stopped") lines.push(`⏹ შეჩერდა ${Math.round(st.progress || 0)}%-ზე${st.error ? ` (${st.error})` : ""}${st.errors ? `, შეცდომა: ${st.errors}` : ""}`);
+    if (st.status === "error") lines.push(`⚠️ ${st.error || ""}`);
+    if (st.elapsed_s != null) lines.push(`${when} · ${Math.floor(st.elapsed_s / 60)} წთ ${st.elapsed_s % 60} წმ${st.locked ? " · მეხსიერება ჩაკეტილი იყო RAM-ში" : ""}`);
+    for (const e of (st.first_errors || []).slice(0, 4)) lines.push(`• ${mtTestName(e.test)}: ${e.offset_mb} MB — ველოდი ${e.expected}, წავიკითხე ${e.got}`);
+    if (st.coverage_pct != null && st.coverage_pct < 60 && st.status !== "error") {
+      lines.push(`ℹ️ შემოწმდა RAM-ის ~${st.coverage_pct}% (დანარჩენი Windows-სა და პროგრამებს უჭირავთ). მეტისთვის დახურე პროგრამები, ან 100% — გადატვირთვით.`);
+    }
+    for (const l of lines) res.appendChild(Object.assign(el("div", "mt-res-line"), { textContent: l }));
+  } else {
+    badge.hidden = true;
+  }
+  clearTimeout(mtTimer);
+  if (running && state.view === "hw") mtTimer = setTimeout(loadMemtest, 1000);
+}
+
+async function loadMemtest() {
+  try { renderMemtest(await apiJson("/api/memtest")); } catch { /* ignore */ }
 }
 
 async function loadOverview() {
@@ -1646,7 +1706,7 @@ function switchView(name) {
   }
   if (name === "chat") scrollDown();
   if (name === "term") openTerminal();
-  if (name === "hw") loadHw();
+  if (name === "hw") { loadHw(); loadMemtest(); }
   if (name === "live") startLive();
   else stopLive();
 }
@@ -2066,6 +2126,16 @@ async function init() {
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
   $("#hw-refresh").addEventListener("click", () => loadHw(true));
+  const mtAction = (action, json = {}) => apiJson(`/api/memtest/${action}`, { method: "POST", json })
+    .then(() => setTimeout(loadMemtest, 400)).catch((e) => toast(e.message));
+  $("#mt-quick").addEventListener("click", () => mtAction("start", { mode: "quick" }));
+  $("#mt-full").addEventListener("click", () => mtAction("start", { mode: "full" }));
+  $("#mt-stop").addEventListener("click", () => mtAction("stop"));
+  $("#mt-reboot").addEventListener("click", () => {
+    if (confirm("კომპიუტერზე გაიხსნება Windows Memory Diagnostic (საჭიროა დადასტურება და გადატვირთვა). გავხსნა?")) {
+      mtAction("reboot").then(() => toast("🖥 ფანჯარა გაიხსნა კომპიუტერზე"));
+    }
+  });
   document.querySelectorAll("#dz-mode button").forEach((b) => b.addEventListener("click", () => {
     document.querySelectorAll("#dz-mode button").forEach((x) => x.classList.toggle("on", x === b));
     $("#dz-grid-pane").hidden = b.dataset.mode !== "grid";

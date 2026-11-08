@@ -359,6 +359,25 @@
       <div id="hw-disks" class="hw-list"><div class="skeleton"></div></div>
       <h2 class="section">ოპერატიული მეხსიერება (RAM)</h2>
       <div id="hw-ram" class="hw-list"><div class="skeleton"></div></div>
+      <div class="hw-card mt-card" id="mt-card">
+        <div class="mt-head"><b>🧠 RAM-ის სიღრმისეული ტესტი</b><span class="hw-badge" id="mt-badge" hidden></span></div>
+        <p class="mt-hint">მეხსიერებაში იწერება ცნობილი ნიმუშები (0/1, ჭადრაკი, მოძრავი ბიტი, მისამართი, შემთხვევითი) და ყოველი სიტყვა ბრუნდება შესამოწმებლად. კომპიუტერი ამ დროს ჩვეულებრივ მუშაობს.</p>
+        <div class="mt-run" id="mt-run" hidden>
+          <div class="hw-bar mt-bar"><span></span></div>
+          <div class="mt-line" id="mt-line"></div>
+        </div>
+        <div class="mt-result" id="mt-result"></div>
+        <div class="mt-btns">
+          <button type="button" class="btn primary" id="mt-quick">სწრაფი ტესტი</button>
+          <button type="button" class="btn" id="mt-full">სრული (10 გავლა)</button>
+          <button type="button" class="btn" id="mt-stop" hidden>შეჩერება</button>
+        </div>
+        <details class="mt-reboot">
+          <summary>100% შემოწმება (გადატვირთვით)</summary>
+          <p>Windows-ში გაშვებული ტესტი მხოლოდ თავისუფალ მეხსიერებას ამოწმებს. მთლიანი RAM-ისთვის კომპიუტერი უნდა გადაიტვირთოს Windows Memory Diagnostic-ით (~15-20 წთ). ღილაკი კომპიუტერზე გახსნის ფანჯარას — იქ დაადასტურე და აირჩიე „Restart now“. შედეგი გადატვირთვის შემდეგ აქვე გამოჩნდება.</p>
+          <button type="button" class="btn" id="mt-reboot">გახსენი Windows Memory Diagnostic</button>
+        </details>
+      </div>
       <p class="hw-note">SSD-ის „სიცოცხლე“ = მწარმოებლის მიერ შეფასებული რესურსიდან დარჩენილი ნაწილი (SMART). RAM-ს ცვეთა არ აქვს — მისი ჯანმრთელობა ნიშნავს, რომ შეცდომები არ ჩანს.</p>
     </section>
 

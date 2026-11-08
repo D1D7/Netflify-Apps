@@ -51,7 +51,16 @@ const EN = {
   "✅ ყველა მოწყობილობა ხელმისაწვდომია": "✅ All devices are reachable", "ვერაფერი მოიძებნა": "Nothing found",
   "მიუწვდომელი · timeout": "Unreachable · timeout", "მიუწვდომელი": "Unreachable", "მოწყობილობები ჯერ არ არის": "No devices yet",
   "ყველაფერი რიგზეა": "All good", "გათიშ.": "Down", "24 სთ": "24 h", "ახლა": "Now", "მიგნება 24 სთ": "Findings 24 h",
-  "ალერტები": "Alerts", "ტერმ.": "Term.", "პარამ.": "Settings", "კომპიუტერი": "Computer", "დისკები და RAM": "Disks and RAM", "დისკები": "Disks",
+  "ალერტები": "Alerts", "🧠 RAM-ის სიღრმისეული ტესტი": "🧠 In-depth RAM test", "სწრაფი ტესტი": "Quick test",
+  "სრული (10 გავლა)": "Full (10 passes)", "შეჩერება": "Stop", "100% შემოწმება (გადატვირთვით)": "100% check (with a reboot)",
+  "გახსენი Windows Memory Diagnostic": "Open Windows Memory Diagnostic", "მიმდინარეობს": "Running", "გაიარა": "Passed",
+  "შეცდომებია": "Errors found", "შეჩერდა": "Stopped", "ვერ დაიწყო": "Could not start", "🖥 ფანჯარა გაიხსნა კომპიუტერზე": "🖥 The window opened on the PC",
+  "მეხსიერებაში იწერება ცნობილი ნიმუშები (0/1, ჭადრაკი, მოძრავი ბიტი, მისამართი, შემთხვევითი) და ყოველი სიტყვა ბრუნდება შესამოწმებლად. კომპიუტერი ამ დროს ჩვეულებრივ მუშაობს.":
+    "Known patterns (0/1, checkerboard, walking bit, address, random) are written into memory and every word is read back. The PC keeps working meanwhile.",
+  "Windows-ში გაშვებული ტესტი მხოლოდ თავისუფალ მეხსიერებას ამოწმებს. მთლიანი RAM-ისთვის კომპიუტერი უნდა გადაიტვირთოს Windows Memory Diagnostic-ით (~15-20 წთ). ღილაკი კომპიუტერზე გახსნის ფანჯარას — იქ დაადასტურე და აირჩიე „Restart now“. შედეგი გადატვირთვის შემდეგ აქვე გამოჩნდება.":
+    "A test inside Windows only checks free memory. For all of the RAM the PC must restart into Windows Memory Diagnostic (~15-20 min). The button opens it on the PC: confirm there and choose \"Restart now\". The result shows up here after the restart.",
+  "კომპიუტერზე გაიხსნება Windows Memory Diagnostic (საჭიროა დადასტურება და გადატვირთვა). გავხსნა?":
+    "Windows Memory Diagnostic will open on the PC (needs confirmation and a restart). Open it?", "ტერმ.": "Term.", "პარამ.": "Settings", "კომპიუტერი": "Computer", "დისკები და RAM": "Disks and RAM", "დისკები": "Disks",
   "ოპერატიული მეხსიერება (RAM)": "Memory (RAM)", "ჯანმრთელი": "Healthy", "ყურადღება": "Attention", "პრობლემა": "Problem",
   "ყველაფერი ჯანმრთელია": "Everything is healthy", "ყურადღება სჭირდება": "Needs attention", "პრობლემაა": "There is a problem",
   "სიცოცხლე": "Life", "სტატუსი": "Status", "ტემპერატურა": "Temperature", "ჩართული": "Powered on", "ჩაწერილი": "Written",

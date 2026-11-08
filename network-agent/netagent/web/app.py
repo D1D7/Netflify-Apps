@@ -491,6 +491,38 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             _hw_cache.update(at=_time.monotonic(), data=data)
         return _hw_cache["data"]
 
+    @app.get("/api/memtest")
+    async def memtest_status():
+        from ..features import memtest
+
+        st = memtest.read_status()
+        if st.get("status") in {"starting", "running"} and not memtest.running():
+            st = {**st, "status": "stopped", "error": "ტესტის პროცესი დასრულდა მოულოდნელად"}  # e.g. the PC rebooted
+        return st
+
+    @app.post("/api/memtest/{action}")
+    async def memtest_action(action: str, request: Request):
+        from ..features import memtest
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        try:
+            if action == "start":
+                st = await asyncio.to_thread(memtest.start, str(body.get("mode", "quick")))
+            elif action == "stop":
+                st = {"stopping": memtest.stop()}
+            elif action == "reboot":
+                st = {"opened": await asyncio.to_thread(memtest.schedule_windows_diagnostic)}
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"memtest_{action}", args=body, ok=True)
+        return st
+
     # -- Wi-Fi dead zones (grid map + walk spots) --------------------------------------------------
     @app.get("/api/wifimap")
     async def wifimap_get():
