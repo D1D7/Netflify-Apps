@@ -31,6 +31,7 @@ UP_PROBE_BYTES = 1_000_000
 UP_TARGET_SECONDS = 5.0  # pick an upload size that takes about this long
 UP_MAX_BYTES = 25_000_000
 FAILS_FOR_OUTAGE = 2
+GAP_SECONDS = 300  # longer than this without a measurement = NetAgent was not running (PC asleep/off), not an outage
 
 
 def root() -> Path:
@@ -131,11 +132,13 @@ class InternetMonitor:
         self.state = state
         self.dir = directory or root()
         self.fails = 0
+        self.last_ts: datetime | None = None
 
     # -- samples -------------------------------------------------------------------------
     def record(self, sample: dict, when: datetime | None = None) -> dict | None:
         """Store one probe; returns an event dict {"type": "down"|"up", ...} on a state change."""
         when = when or datetime.now()
+        self.dir.mkdir(parents=True, exist_ok=True)
         path = self.dir / f"{when.date().isoformat()}.csv"
         new = not path.exists()
         with path.open("a", newline="", encoding="utf-8") as f:
@@ -145,6 +148,18 @@ class InternetMonitor:
             w.writerow([when.isoformat(timespec="seconds"), int(sample["online"]), sample["latency_ms"] or "", sample["loss"]])
         self._prune(when)
         start = self.state.get("isp_outage_start")
+        last, self.last_ts = self.last_ts, when
+        if last is not None and (when - last).total_seconds() > GAP_SECONDS:
+            # NetAgent was not measuring (PC asleep/off, server stopped). Failures before and after the gap are not
+            # one outage: an open outage ends at the last measurement we have, and the failure count starts over.
+            self.fails = 0
+            if start:
+                self.state.set("isp_outage_start", None)
+                secs = int((last - datetime.fromisoformat(start)).total_seconds())
+                if secs >= 60:
+                    outage = {"start": start, "end": last.isoformat(timespec="seconds"), "seconds": secs}
+                    self.state.update("isp_outages", lambda v: ((v or []) + [outage])[-300:])
+                start = None
         if sample["online"]:
             self.fails = 0
             if start:
@@ -193,11 +208,40 @@ class InternetMonitor:
         return result
 
     # -- summaries ---------------------------------------------------------------------------
+    @staticmethod
+    def _checked(outages: list[dict], rows) -> list[dict]:
+        """Outages as the measurements support them. Older versions glued failures from before and after a pause
+        in measuring (PC asleep) into one long outage; such an outage shrinks to its failed run without gaps,
+        or disappears when nothing in it lasted a minute."""
+        out = []
+        for o in outages:
+            a, b = datetime.fromisoformat(o["start"]), datetime.fromisoformat(o["end"])
+            inside = [r for r in rows if a <= r[0] <= b]
+            if inside and all((y[0] - x[0]).total_seconds() <= GAP_SECONDS for x, y in zip(inside, inside[1:])) \
+                    and (inside[0][0] - a).total_seconds() <= GAP_SECONDS and (b - inside[-1][0]).total_seconds() <= GAP_SECONDS:
+                out.append(o)  # continuously measured: as recorded
+                continue
+            best, run = None, []
+            for r in inside:
+                if not r[1] and (not run or (r[0] - run[-1][0]).total_seconds() <= GAP_SECONDS):
+                    run.append(r)
+                else:
+                    if run and (best is None or run[-1][0] - run[0][0] > best[-1][0] - best[0][0]):
+                        best = run
+                    run = [r] if not r[1] else []
+            if run and (best is None or run[-1][0] - run[0][0] > best[-1][0] - best[0][0]):
+                best = run
+            if best and (best[-1][0] - best[0][0]).total_seconds() + 60 >= 120:
+                secs = int((best[-1][0] - best[0][0]).total_seconds()) + 60
+                out.append({"start": best[0][0].isoformat(timespec="seconds"),
+                            "end": (best[-1][0] + timedelta(seconds=60)).isoformat(timespec="seconds"), "seconds": secs})
+        return out
+
     def summary(self, days: float = 1) -> dict:
         since = datetime.now() - timedelta(days=days)
         rows = self.samples(since)
         lat = [r[2] for r in rows if r[2] is not None]
-        outages = [o for o in (self.state.get("isp_outages") or []) if o["end"] >= since.isoformat()]
+        outages = self._checked([o for o in (self.state.get("isp_outages") or []) if o["end"] >= since.isoformat()], rows)
         current = self.state.get("isp_outage_start")
         speeds = [t for t in (self.state.get("isp_speedtests") or []) if t["ts"] >= since.isoformat()]
         res = {
@@ -293,6 +337,180 @@ def format_report(r: dict, plan_mbps: int = 0) -> str:
     return "\n".join(lines)
 
 
+# -- speed history and the PDF for the provider ---------------------------------------------------------
+def speed_tests(state, days: float) -> list[dict]:
+    since = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    return [x for x in (state.get("isp_speedtests") or []) if x.get("ts", "") >= since and x.get("down_mbps") is not None]
+
+
+def speed_stats(tests: list[dict], plan: int = 0) -> dict:
+    if not tests:
+        return {"count": 0}
+    down = [x["down_mbps"] for x in tests]
+    up = [x["up_mbps"] for x in tests]
+    res = {"count": len(tests), "down_avg": round(statistics.mean(down), 1), "down_min": min(down), "down_max": max(down),
+           "down_median": round(statistics.median(down), 1), "up_avg": round(statistics.mean(up), 1), "up_min": min(up),
+           "up_max": max(up), "first": tests[0]["ts"], "last": tests[-1]["ts"]}
+    if plan:
+        res["plan"] = plan
+        res["plan_pct"] = round(100 * res["down_avg"] / plan)
+        res["below_half"] = sum(1 for x in down if x < plan * 0.5)
+    return res
+
+
+def speed_chart(tests: list[dict], path: Path, plan: int = 0, ax=None) -> Path | None:
+    if len(tests) < 1:
+        return None
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+
+    own = ax is None
+    if own:
+        fig, ax = plt.subplots(figsize=(9, 3.6), dpi=130)
+    xs = [datetime.fromisoformat(x["ts"]) for x in tests]
+    ax.plot(xs, [x["down_mbps"] for x in tests], marker="o", ms=3.5, lw=1.6, color="#0891b2", label="ჩამოტვირთვა (download)")
+    ax.plot(xs, [x["up_mbps"] for x in tests], marker="o", ms=3, lw=1.2, color="#7c3aed", alpha=0.85, label="ატვირთვა (upload)")
+    if plan:
+        ax.axhline(plan, color="#059669", ls="--", lw=1.1, label=f"ტარიფი {plan} Mbps")
+        ax.axhline(plan * 0.5, color="#dc2626", ls=":", lw=1.1, label="ტარიფის 50%")
+    ax.set_ylabel("Mbps")
+    ax.set_ylim(bottom=0)
+    ax.set_title("ინტერნეტის სიჩქარე — ყველა გაზომვა", fontsize=10, loc="left")
+    ax.grid(alpha=0.25)
+    ax.spines[["top", "right"]].set_visible(False)
+    locator = mdates.AutoDateLocator(maxticks=8)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(  # no repeated day labels, no English month names
+        locator, formats=["%Y", "%m-%d", "%m-%d", "%H:%M", "%H:%M", "%S"],
+        offset_formats=["", "%Y", "%Y-%m", "%Y-%m-%d", "%Y-%m-%d", "%Y-%m-%d %H:%M"]))
+    ax.legend(fontsize=7.5, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=4)  # below: never on the data
+    if own:
+        fig.tight_layout()
+        fig.savefig(path)
+        plt.close(fig)
+    return path
+
+
+def format_speed_history(st: dict, days: float) -> str:
+    if not st["count"]:
+        return ("📈 სიჩქარის გაზომვები ჯერ არ არის. გაუშვი /speedtest — ან NetAgent თვითონ ზომავს ყოველ "
+                f"{env_int('NETAGENT_SPEEDTEST_INTERVAL', 12)} სთ-ში.")
+    lines = [f"📈 **სიჩქარის ისტორია — ბოლო {int(days)} დღე** ({st['count']} გაზომვა)",
+             f"ჩამოტვირთვა (download): საშუალო **{st['down_avg']}** · მედიანა {st['down_median']} · მინ. {st['down_min']} · "
+             f"მაქს. {st['down_max']} Mbps",
+             f"ატვირთვა (upload): საშუალო **{st['up_avg']}** · მინ. {st['up_min']} · მაქს. {st['up_max']} Mbps"]
+    if st.get("plan"):
+        lines.append(f"ტარიფი {st['plan']} Mbps → საშუალოდ **{st['plan_pct']}%**; ნახევარზე ნაკლები: {st['below_half']}-ჯერ")
+    else:
+        lines.append("ℹ️ ტარიფთან შესადარებლად .env-ში ჩაწერე NETAGENT_ISP_PLAN_MBPS=100 (შენი ტარიფი).")
+    return "\n".join(lines)
+
+
+def speedhistory_cmd(s, args, user) -> Result:
+    try:
+        days = max(1.0, min(float(args[0]) if args else 30.0, 120.0))
+    except ValueError:
+        raise CommandError("გამოყენება: /speedhistory · /speedhistory 7") from None
+    plan = env_int("NETAGENT_ISP_PLAN_MBPS", 0)
+    tests = speed_tests(s.state, days)
+    settings.export_dir.mkdir(parents=True, exist_ok=True)
+    img = speed_chart(tests, settings.export_dir / f"speed-{datetime.now():%Y%m%d-%H%M%S}.png", plan) if tests else None
+    return Result(format_speed_history(speed_stats(tests, plan), days), image=img,
+                  buttons=[Button("⚡ ახლა გაზომვა", "/speedtest"), Button("📄 PDF პროვაიდერისთვის", f"/isp pdf {int(days)}")])
+
+
+def render_isp_pdf(s, days: float, path: Path) -> Path:
+    """A4 report for the provider: availability, outages, latency, speeds vs. the plan, the worst tests, charts."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    m = monitor_for(s)
+    r = m.summary(days)
+    plan = env_int("NETAGENT_ISP_PLAN_MBPS", 0)
+    tests = speed_tests(s.state, days)
+    st = speed_stats(tests, plan)
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    end = datetime.now().strftime("%Y-%m-%d")
+    provider = next((x.get("isp") for x in reversed(tests) if x.get("isp")), "") or "—"
+    ip = next((x.get("ip") for x in reversed(tests) if x.get("ip")), "") or "—"
+    with PdfPages(path) as pdf:
+        fig = plt.figure(figsize=(8.27, 11.69))
+        y = 0.95
+        def line(text, size=10, weight="normal", color="#0f172a", gap=0.024):
+            nonlocal y
+            fig.text(0.07, y, text[:115], fontsize=size, weight=weight, color=color)
+            y -= gap
+        line("NetAgent", 11, "bold", "#0891b2", 0.03)
+        line("ინტერნეტ-მომსახურების ხარისხის ანგარიში", 16, "bold", gap=0.032)
+        line(f"პერიოდი: {start} — {end}   ·   პროვაიდერი: {provider}   ·   საჯარო IP: {ip}", 9.5, color="#475569", gap=0.04)
+        line("ხელმისაწვდომობა", 12, "bold", gap=0.028)
+        if r["samples"]:
+            line(f"გაზომვა ყოველ წუთში: {r['samples']}   ·   ხელმისაწვდომობა: {r['uptime_percent']}%")
+            line(f"გათიშვები: {len(r['outages'])}" + (f", ჯამში {_fmt_dur(r['outage_total_seconds'])}" if r["outages"] else ""))
+            if r["latency_avg_ms"] is not None:
+                line(f"დაყოვნება: საშუალო {r['latency_avg_ms']} ms" + (f", p95 {r['latency_p95_ms']} ms" if r["latency_p95_ms"] else "")
+                     + f"   ·   დანაკარგი: {r['loss_avg_percent']}%")
+        else:
+            line("ამ პერიოდის გაზომვები არ არის.")
+        y -= 0.012
+        line("სიჩქარე", 12, "bold", gap=0.028)
+        if st["count"]:
+            line(f"გაზომვები: {st['count']} ({st['first'][:16].replace('T', ' ')} — {st['last'][:16].replace('T', ' ')})")
+            line(f"ჩამოტვირთვა: საშუალო {st['down_avg']} Mbps, მედიანა {st['down_median']}, მინიმუმი {st['down_min']}, მაქსიმუმი {st['down_max']}")
+            line(f"ატვირთვა: საშუალო {st['up_avg']} Mbps, მინიმუმი {st['up_min']}, მაქსიმუმი {st['up_max']}")
+            if plan:
+                line(f"ტარიფი: {plan} Mbps → საშუალოდ მიღებულია {st['plan_pct']}%; ტარიფის ნახევარზე ნაკლები — {st['below_half']} გაზომვა",
+                     weight="bold", color="#dc2626" if st["plan_pct"] < 80 else "#059669")
+            worst = sorted(tests, key=lambda x: x["down_mbps"])[:6]
+            y -= 0.008
+            line("ყველაზე დაბალი გაზომვები:", 10, "bold")
+            for x in worst:
+                line(f"• {x['ts'][:16].replace('T', ' ')} — ჩამოტვირთვა {x['down_mbps']} Mbps, ატვირთვა {x['up_mbps']} Mbps, ping {x.get('ping_ms', '—')} ms", 9)
+        else:
+            line("სიჩქარის გაზომვები არ არის (/speedtest).")
+        if r["outages"]:
+            y -= 0.008
+            line("გათიშვების სია:", 10, "bold")
+            for o in r["outages"][-12:]:
+                line(f"• {o['start'].replace('T', ' ')} — {o['end'][11:16]} ({_fmt_dur(o['seconds'])})", 9)
+        fig.text(0.07, 0.04, "გაზომილია ავტომატურად NetAgent-ით (ICMP/TCP ყოველ წუთში, სიჩქარე — speed.cloudflare.com).",
+                 fontsize=8, color="#64748b")
+        pdf.savefig(fig)
+        plt.close(fig)
+
+        fig, axes = plt.subplots(2, 1, figsize=(8.27, 11.69))
+        if tests:
+            speed_chart(tests, path, plan, ax=axes[0])
+        else:
+            axes[0].text(0.5, 0.5, "სიჩქარის გაზომვები არ არის", ha="center", va="center")
+            axes[0].axis("off")
+        rows = m.samples(datetime.now() - timedelta(days=days))
+        if rows:
+            ax = axes[1]
+            ax.plot([x[0] for x in rows], [x[2] if x[1] else None for x in rows], color="#0891b2", lw=0.8)
+            for x in rows:
+                if not x[1]:
+                    ax.axvspan(x[0] - timedelta(seconds=30), x[0] + timedelta(seconds=30), color="#dc2626", alpha=0.35, lw=0)
+            ax.set_title("დაყოვნება (წითელი — კავშირი არ იყო)", fontsize=10, loc="left")
+            ax.set_ylabel("ms")
+            ax.grid(alpha=0.25)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d" if days > 2 else "%H:%M"))
+        else:
+            axes[1].axis("off")
+        fig.tight_layout(pad=3)
+        pdf.savefig(fig)
+        plt.close(fig)
+    return path
+
+
 # -- commands / tools / jobs ------------------------------------------------------------------
 _MONITORS: dict[int, InternetMonitor] = {}
 
@@ -306,6 +524,15 @@ def monitor_for(s) -> InternetMonitor:
 
 def isp_cmd(s, args, user) -> Result:
     m = monitor_for(s)
+    if args and args[0].lower() == "pdf":
+        try:
+            days = max(1.0, min(float(args[1]) if len(args) > 1 else 30.0, 120.0))
+        except ValueError:
+            raise CommandError("გამოყენება: /isp pdf 30") from None
+        settings.export_dir.mkdir(parents=True, exist_ok=True)
+        path = render_isp_pdf(s, days, settings.export_dir / f"isp-report-{datetime.now():%Y%m%d-%H%M}.pdf")
+        return Result(f"📄 **ანგარიში პროვაიდერისთვის** ({int(days)} დღე) — ხელმისაწვდომობა, გათიშვები, დაყოვნება, "
+                      "სიჩქარე ტარიფთან შედარებით, ყველაზე ცუდი გაზომვები და გრაფიკები. გადაუგზავნე პროვაიდერს.", files=[path])
     report = bool(args) and args[0].lower() == "report"
     rest = args[1:] if report else args
     try:
@@ -319,7 +546,8 @@ def isp_cmd(s, args, user) -> Result:
     settings.export_dir.mkdir(parents=True, exist_ok=True)
     img = m.chart(days, settings.export_dir / f"internet-{datetime.now():%Y%m%d-%H%M%S}.png")
     return Result(format_summary(r), image=img,
-                  buttons=[Button("⚡ სიჩქარის ტესტი", "/speedtest"), Button("📄 რეპორტი 30 დღე", "/isp report 30")])
+                  buttons=[Button("⚡ სიჩქარის ტესტი", "/speedtest"), Button("📈 სიჩქარის ისტორია", "/speedhistory"),
+                           Button("📄 PDF პროვაიდერისთვის", "/isp pdf 30")])
 
 
 def speedtest_cmd(s, args, user) -> Result:
@@ -348,8 +576,9 @@ def format_speed(t: dict) -> str:
     return "\n".join(lines)
 
 
-COMMANDS = {"isp": isp_cmd, "speedtest": speedtest_cmd}
-HELP = ["/isp — ინტერნეტის მდგომარეობა (/isp 7 · /isp report 30 — პროვაიდერისთვის) · /speedtest — სიჩქარე"]
+COMMANDS = {"isp": isp_cmd, "speedtest": speedtest_cmd, "speedhistory": speedhistory_cmd}
+HELP = ["/isp — ინტერნეტის მდგომარეობა (/isp 7 · /isp report 30 · /isp pdf 30 — PDF პროვაიდერისთვის) · /speedtest — სიჩქარე",
+        "/speedhistory — სიჩქარის ისტორია გრაფიკით (/speedhistory 7)"]
 BOT_COMMANDS = [("isp", "ინტერნეტის მდგომარეობა და გათიშვები"), ("speedtest", "ინტერნეტის სიჩქარე")]
 TOOLS = [
     ({"name": "internet_status",

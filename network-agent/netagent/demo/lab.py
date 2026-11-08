@@ -415,6 +415,8 @@ SCENARIOS = {
     "down": "SW-Access-2 მთლიანად გაითიშა",
     "newdevice": "ქსელში უცნობი მოწყობილობა ჩაერთო",
     "bruteforce": "MT-Branch-ზე პაროლის გამოცნობის მცდელობა (წარუმატებელი შესვლები)",
+    "errdisable": "SW-Access-2-ის Gi1/0/12 err-disabled მდგომარეობაშია (BPDU Guard)",
+    "errdisable-sticky": "SW-Access-2-ის Gi1/0/12 err-disabled — და loop ჯერ არ მოხსნილა (გამოსწორება არ უშველის)",
 }
 from .lab_extra import SCENARIOS as _EXTRA  # noqa: E402
 
@@ -491,6 +493,12 @@ class DemoLab:
             cisco_mac = f"{cisco_mac[:4]}.{cisco_mac[4:8]}.{cisco_mac[8:]}"
             ip = f"192.168.10.{random.randint(100, 199)}"
             core.outputs["show ip arp"] += f"\nInternet  {ip:<16} {'0':>9}   {cisco_mac}  ARPA   Vlan10"
+        elif name in {"errdisable", "errdisable-sticky"}:
+            acc.outputs["show interfaces status err-disabled"] = (
+                "Port      Name               Status       Reason               Err-disabled Vlans\n"
+                "Gi1/0/12  Printer-3F         err-disabled bpduguard")
+            if name == "errdisable-sticky":
+                FAULTS["errdisable_sticky"] = True  # the loop is still there: the port fails again after the fix
         elif name == "bruteforce":
             for i in range(6):
                 self.syslog("MT-Branch", 4, f"login failure for user admin from 45.155.205.{10 + i} via ssh")

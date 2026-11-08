@@ -13,7 +13,7 @@ VIEWER_BLOCKED_COMMANDS = {
     "update", "selfbackup", "notify", "import", "demo",              # NetAgent itself / its data
     "mute", "unmute", "maintenance", "ack", "schedule", "unschedule",
     "note", "delnote", "discover-add", "discover-cancel", "site",
-    "name", "wake", "users", "kick",
+    "name", "wake", "users", "kick", "trust", "untrust", "heal",
 }
 VIEWER_BLOCKED_TOOLS = {"save_note", "delete_note", "ipam_set", "propose_config_change"}
 

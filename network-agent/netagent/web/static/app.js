@@ -782,14 +782,111 @@ async function setPush(enable) {
   await refreshPushUI();
 }
 
+// ---------------------------------------------------------------- live network map (Network tab)
+const SVGNS = "http://www.w3.org/2000/svg";
+const svgEl = (tag, attrs = {}) => {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+};
+let mapData = null;
+
+async function loadMap(refresh = false) {
+  const box = $("#map-box");
+  if (refresh) box.classList.add("loading");
+  try {
+    mapData = await apiJson(`/api/topology${refresh ? "?refresh=1" : ""}`);
+    renderMap();
+    if (refresh) toast("კაბელები განახლდა");
+  } catch (err) {
+    if (err.message !== "unauthorized") box.replaceChildren(Object.assign(el("div", "empty-note"), { textContent: `⚠️ ${err.message}` }));
+  } finally {
+    box.classList.remove("loading");
+  }
+}
+
+function renderMap() {
+  const box = $("#map-box");
+  const d = mapData;
+  $("#map-pop").hidden = true;
+  if (!d || !d.nodes.length) {
+    box.replaceChildren(Object.assign(el("div", "empty-note"), {
+      textContent: "რუკისთვის საჭიროა მართვადი როუტერები/switch-ები devices.yaml-ში (კაბელებს CDP/LLDP-ით ვპოულობ).",
+    }));
+    return;
+  }
+  const W = 480, H = Math.max(220, (d.rows || 3) * 105);  // phone-sized canvas, one row per hop
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "map-svg", role: "img", "aria-label": "ქსელის რუკა" });
+  const pos = Object.fromEntries(d.nodes.map((n) => [n.id, [n.x * W, n.y * H]]));
+  for (const l of d.links) {
+    const a = pos[l.a], b = pos[l.b];
+    if (!a || !b) continue;
+    const u = l.util;
+    const cls = u == null ? "l-none" : u >= 80 ? "l-bad" : u >= 50 ? "l-warn" : "l-ok";
+    const line = svgEl("line", { x1: a[0], y1: a[1], x2: b[0], y2: b[1], class: `map-link ${cls}`,
+      "stroke-width": (2 + Math.min(u || 0, 100) / 16).toFixed(1) });
+    const t = svgEl("title");
+    t.textContent = `${l.a} ${l.a_port} ↔ ${l.b} ${l.b_port}` + (u == null ? "" : ` · დატვირთვა ${u}%`);
+    line.appendChild(t);
+    svg.appendChild(line);
+    if (u != null) {
+      const lbl = svgEl("text", { x: (a[0] + b[0]) / 2 + 8, y: (a[1] + b[1]) / 2, class: "map-util" });
+      lbl.textContent = `${Math.round(u)}%`;
+      svg.appendChild(lbl);
+    }
+  }
+  for (const n of d.nodes) {
+    const [x, y] = pos[n.id];
+    const g = svgEl("g", { class: `map-node ${n.up === true ? "up" : n.up === false ? "down" : "ext"}`, tabindex: "0", role: "button" });
+    g.appendChild(svgEl("circle", { cx: x, cy: y, r: 19 }));
+    const ini = svgEl("text", { x, y: y + 4.5, class: "map-ini" });
+    ini.textContent = n.id.replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?";
+    const name = svgEl("text", { x, y: y + 34, class: "map-name" });
+    name.textContent = n.id.length > 13 ? `${n.id.slice(0, 12)}…` : n.id;
+    g.append(ini, name);
+    const open = (ev) => { ev.stopPropagation(); mapPopup(n, x / W, y / H); };
+    g.addEventListener("click", open);
+    g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") open(e); });
+    svg.appendChild(g);
+  }
+  svg.addEventListener("click", () => { $("#map-pop").hidden = true; });
+  const note = el("div", "map-note");
+  note.textContent = `${d.up} ონლაინ · ${d.down} გათიშული · კაბელები: ${d.links.length}` + (d.generated ? ` · აღმოჩენილია ${d.generated.replace("T", " ")}` : "");
+  box.replaceChildren(svg, note);
+}
+
+function mapPopup(n, fx, fy) {
+  const pop = $("#map-pop");
+  pop.replaceChildren();
+  const title = el("div", "map-pop-title");
+  title.textContent = n.id;
+  const sub = el("div", "map-pop-sub");
+  sub.textContent = [n.ip, n.type, n.up === true ? `ონლაინ${n.latency_ms != null ? ` · ${Math.round(n.latency_ms)} ms` : ""}` : n.up === false ? "გათიშულია" : "გარე მეზობელი (inventory-ში არ არის)"]
+    .filter(Boolean).join(" · ");
+  pop.append(title, sub);
+  const acts = el("div", "map-pop-acts");
+  const add = (label, fn) => { const b = el("button", "chip"); b.type = "button"; b.textContent = label; b.addEventListener("click", fn); acts.appendChild(b); };
+  if (n.known) {
+    add("ჯანმრთელობა", () => send(`/health ${n.id}`));
+    add("დიაგნოსტიკა", () => send(`/diagnose ${n.id}`));
+    add("ტერმინალი", () => { switchView("term"); setTimeout(() => { const s = $("#term-dev"); if ([...s.options].some((o) => o.value === n.id)) { s.value = n.id; s.dispatchEvent(new Event("change")); } }, 300); });
+  } else if (n.ip) {
+    add("შემოწმება", () => send(`/diagnose ${n.ip}`));
+  }
+  pop.appendChild(acts);
+  pop.style.left = `${Math.min(Math.max(fx * 100, 4), 60)}%`;
+  pop.style.top = `${Math.min(fy * 100 + 6, 70)}%`;
+  pop.hidden = false;
+}
+
 // ---------------------------------------------------------------- Live Devices
 // Polls /api/live while the tab is open (the server pings in the background, so nothing here blocks).
-const live = { data: null, sort: "ip", dir: 1, search: "", selected: null, timer: null, detailAt: 0 };
+const live = { data: null, sort: "ip", dir: 1, search: "", selected: null, timer: null, detailAt: 0, filter: "all", days: 1 };
 
 const ipNum = (ip) => ip.split(".").reduce((n, o) => n * 256 + Number(o), 0);
 const LIVE_SORT = {
   status: (r) => (r.online ? 0 : 1), ip: (r) => ipNum(r.ip), mac: (r) => (r.mac === "N/A" ? "~" : r.mac),
-  vendor: (r) => (r.vendor || "~").toLowerCase(), hostname: (r) => (r.label || r.hostname || "~").toLowerCase(),
+  vendor: (r) => (r.vendor || "~").toLowerCase(), hostname: (r) => (r.label || r.hostname || r.kind_label || "~").toLowerCase(),
   ms: (r) => (r.latency_ms == null ? 1e9 : r.latency_ms), first: (r) => r.first_seen, last: (r) => r.last_seen,
 };
 
@@ -841,7 +938,16 @@ function renderLive() {
 
   // rows: search, sort, render as text only (names come from the network: never innerHTML)
   const q = live.search.trim().toLowerCase();
-  const rows = d.devices.filter((r) => !q || [r.ip, r.mac, r.vendor, r.hostname, r.label].join(" ").toLowerCase().includes(q));
+  const rows = d.devices.filter((r) => (live.filter === "all" || !r.trusted)
+    && (!q || [r.ip, r.mac, r.vendor, r.hostname, r.label, r.kind_label].join(" ").toLowerCase().includes(q)));
+  const unknown = d.devices.filter((r) => !r.trusted).length;
+  $('#live-filter [data-filter="unknown"]').textContent = unknown ? `უცნობი (${unknown})` : "უცნობი";
+  // settings panel mirrors the server (unless the user is editing it right now)
+  if (!$("#live-settings").contains(document.activeElement)) {
+    $("#live-alert-unknown").checked = d.settings.alert_unknown;
+    $("#live-night").checked = d.settings.night_alerts;
+    $("#live-night-window").value = d.settings.night;
+  }
   const key = LIVE_SORT[live.sort] || LIVE_SORT.ip;
   rows.sort((a, b) => { const x = key(a), y = key(b); return (x > y ? 1 : x < y ? -1 : ipNum(a.ip) - ipNum(b.ip)) * live.dir; });
   document.querySelectorAll(".live-table th button").forEach((b) => {
@@ -867,11 +973,13 @@ function renderLive() {
     liveCell(tr, "c-ip", r.ip, r.mac);
     liveCell(tr, "c-mac", r.mac);
     liveCell(tr, "c-vendor", r.vendor || "—");
-    const name = liveCell(tr, "c-name", r.label || r.hostname || "—", r.vendor || "");
+    const name = liveCell(tr, "c-name", r.label || r.hostname || (r.kind ? r.kind_label : "—"), r.vendor || "");
+    name.insertBefore(el("span", "lv-kind", icon(r.icon)), name.firstChild);
+    name.firstChild.title = r.kind_label;
     if (r.label && r.hostname) name.title = `${r.hostname} (${r.hostname_source})`;
     else if (r.hostname) name.title = r.hostname_source;
-    for (const [flag, text, cls] of [[r.new, "NEW", "tag-new"], [r.self, "ეს PC", "tag"], [r.gateway, "როუტერი", "tag"]]) {
-      if (flag) { const t = el("span", `lv-tag ${cls}`); t.textContent = text; name.firstChild.after(t); }
+    for (const [flag, text, cls] of [[!r.trusted, "უცნობი", "tag-unknown"], [r.new, "NEW", "tag-new"], [r.self, "ეს PC", "tag"], [r.gateway, "როუტერი", "tag"]]) {
+      if (flag) { const t = el("span", `lv-tag ${cls}`); t.textContent = text; name.querySelector(".lv-main").after(t); }
     }
     const ms = r.latency_ms;
     const tone = ms == null ? "" : ms < 20 ? "good" : ms < 100 ? "warn" : "bad";
@@ -938,8 +1046,13 @@ async function renderLiveDetail() {
   box.innerHTML = `<div class="lv-head"><div><div class="lv-title"></div><div class="lv-subtitle"></div></div>
       <button type="button" class="ghost-icon" aria-label="დახურვა">${icon("x")}</button></div>
     <div class="lv-stats"></div><div class="lv-graph-wrap">${h ? liveGraph(h.points) : ""}</div>
+    <div class="lv-tl-head"><span>ონლაინ ისტორია</span><div class="segmented lv-days">
+      <button type="button" data-days="1">24 სთ</button><button type="button" data-days="7">7 დღე</button></div></div>
+    <div class="lv-timeline"></div>
     <dl class="lv-facts"></dl>
-    <div class="lv-actions"><button type="button" class="chip" data-act="ports">${icon("search")}<span>ღია პორტები</span></button>
+    <div class="lv-iot"></div>
+    <div class="lv-actions"><button type="button" class="chip" data-act="trust">${icon("check")}<span></span></button>
+      <button type="button" class="chip" data-act="ports">${icon("search")}<span>ღია პორტები</span></button>
       <button type="button" class="chip" data-act="name">${icon("note")}<span>სახელის მიცემა</span></button></div>`;
   box.querySelector(".lv-title").textContent = row.label || row.hostname || row.vendor || row.ip;
   box.querySelector(".lv-subtitle").textContent = `${row.online ? "Online" : "Offline"} · ${row.ip}`;
@@ -947,13 +1060,27 @@ async function renderLiveDetail() {
   box.querySelector(".lv-stats").replaceChildren(...stats.map(([k, v]) => {
     const s = el("span"); s.textContent = `${k} ${v == null ? "—" : liveMs(v)}`; return s;
   }), ...(h && h.loss_pct != null ? [Object.assign(el("span"), { textContent: `დანაკარგი ${h.loss_pct}% (${h.samples} გაზომვა)` })] : []));
-  const facts = [["MAC", row.mac], ["მწარმოებელი", row.vendor || "—"],
+  const facts = [["ტიპი", row.kind_label], ["სტატუსი", row.trusted ? "ნაცნობი (შენი)" : "უცნობი"], ["MAC", row.mac], ["მწარმოებელი", row.vendor || "—"],
+    ["სერვისები", row.ports && row.ports.length ? row.ports.join(", ") : "ღია პორტი არ ჩანს"],
     ["ქსელის სახელი", row.hostname ? `${row.hostname} · ${row.hostname_source}` : "ვერ გაირკვა (DNS, NetBIOS, mDNS)"],
     ["პირველად", liveTime(row.first_seen)], ["ბოლოს", row.online ? "ახლა" : liveTime(row.last_seen)]];
   box.querySelector(".lv-facts").replaceChildren(...facts.flatMap(([k, v]) => {
     const dt = el("dt"); dt.textContent = k; const dd = el("dd"); dd.textContent = v; return [dt, dd];
   }));
   box.querySelector(".ghost-icon").addEventListener("click", () => { live.selected = null; renderLive(); });
+  const trustBtn = box.querySelector('[data-act="trust"]');
+  trustBtn.lastChild.textContent = row.trusted ? "ნაცნობებიდან მოხსნა" : "ჩემია (ნაცნობი)";
+  trustBtn.addEventListener("click", () => apiJson("/api/live/trust", { method: "POST", json: { key: row.key, trusted: !row.trusted } })
+    .then(() => { toast(row.trusted ? "მოიხსნა ნაცნობებიდან" : "მოინიშნა ნაცნობად"); live.detailAt = 0; loadLive(); })
+    .catch((e) => toast(e.message)));
+  box.querySelectorAll(".lv-days button").forEach((b) => {
+    b.classList.toggle("on", Number(b.dataset.days) === live.days);
+    b.addEventListener("click", () => { live.days = Number(b.dataset.days); live.detailAt = 0; renderLiveDetail(); });
+  });
+  apiJson(`/api/live/timeline?key=${encodeURIComponent(row.key)}&days=${live.days}`)
+    .then((tl) => { if (live.selected === row.key) box.querySelector(".lv-timeline").innerHTML = liveTimeline(tl); })
+    .catch(() => {});
+  renderIotFindings(box.querySelector(".lv-iot"), row.ip);
   box.querySelector('[data-act="ports"]').addEventListener("click", () => { switchView("chat"); send(`/scan ${row.ip}`); });
   box.querySelector('[data-act="name"]').addEventListener("click", () => {
     switchView("chat");
@@ -962,6 +1089,49 @@ async function renderLiveDetail() {
     input.focus();
     updateSend();
   });
+}
+
+function liveTimeline(tl) {
+  const n = tl.values.length, W = 600, H = 26;
+  const w = W / n;
+  let cells = "";
+  tl.values.forEach((v, i) => {
+    const cls = v == null ? "tl-na" : v >= 0.99 ? "tl-on" : v > 0 ? "tl-part" : "tl-off";
+    cells += `<rect class="${cls}" x="${(i * w).toFixed(2)}" y="0" width="${(w + 0.3).toFixed(2)}" height="${H}"/>`;
+  });
+  const ticks = [];
+  const slots = 4;
+  for (let i = 0; i <= slots; i++) {
+    const t = new Date((tl.start + (i / slots) * n * tl.slot_seconds) * 1000);
+    ticks.push(`<span>${tl.days === 1 ? t.toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : t.toLocaleDateString("ka-GE", { day: "2-digit", month: "2-digit" })}</span>`);
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${cells}</svg>`
+    + `<div class="lv-ticks">${ticks.join("")}</div><div class="lv-tl-sum">ონლაინ: ${tl.online_hours} სთ ${tl.days === 1 ? "ბოლო 24 სთ-ში" : "ბოლო 7 დღეში"}</div>`;
+}
+
+let iotCache = { at: 0, data: null };
+
+async function renderIotFindings(box, ip) {
+  if (Date.now() - iotCache.at > 20_000) {
+    try { iotCache = { at: Date.now(), data: await apiJson("/api/iot") }; } catch { return; }
+  }
+  const fs = iotCache.data?.devices?.[ip];
+  box.replaceChildren();
+  if (!fs) return;
+  const head = el("div", "lv-tl-head");
+  head.textContent = `IoT შემოწმება · ${liveTime(Date.parse(iotCache.data.ts) / 1000)}`;
+  box.appendChild(head);
+  for (const f of fs) {
+    const item = el("div", `iot-finding ${f.severity}`, "<b></b><span></span>");
+    item.firstChild.textContent = f.title;
+    item.lastChild.textContent = f.severity === "ok" ? "" : f.advice;
+    box.appendChild(item);
+  }
+}
+
+function runIotCheck() {
+  iotCache.at = 0;
+  send("/iot");  // full report in the chat; per-device findings appear in Live details afterwards
 }
 
 async function loadLive() {
@@ -1022,6 +1192,7 @@ function switchView(name) {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const sidePane = applyLayout();
   if (name === "dash" || (sidePane && !state.overview)) loadOverview();
+  if (name === "dash") loadMap();
   if (name === "settings") {
     refreshPushUI();
     apiJson("/api/command", { method: "POST", json: { line: "/usage" } })
@@ -1444,7 +1615,8 @@ async function init() {
     document.documentElement.style.setProperty("--topbar-h", `${Math.round(entry.target.getBoundingClientRect().height)}px`);
   }).observe($(".topbar"));
   $("#netsum").addEventListener("click", () => switchView("dash"));
-  $("#dash-refresh").addEventListener("click", loadOverview);
+  $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
+  $("#map-refresh").addEventListener("click", () => loadMap(true));
   document.querySelectorAll("#dev-filter button").forEach((b) => b.addEventListener("click", () => {
     state.devFilter = b.dataset.filter;
     document.querySelectorAll("#dev-filter button").forEach((x) => x.classList.toggle("on", x === b));
@@ -1461,6 +1633,24 @@ async function init() {
   }));
   $("#live-iface").addEventListener("change", (e) => liveSetting({ interface: e.target.value }));
   $("#live-interval").addEventListener("change", (e) => liveSetting({ ping_interval: Number(e.target.value) }));
+  document.querySelectorAll("#live-filter button").forEach((b) => b.addEventListener("click", () => {
+    live.filter = b.dataset.filter;
+    document.querySelectorAll("#live-filter button").forEach((x) => x.classList.toggle("on", x === b));
+    renderLive();
+  }));
+  $("#live-alert-unknown").addEventListener("change", (e) => liveSetting({ alert_unknown: e.target.checked }));
+  $("#live-night").addEventListener("change", (e) => liveSetting({ night_alerts: e.target.checked }));
+  $("#live-night-window").addEventListener("change", (e) => {
+    const v = e.target.value.replace(/\s/g, "");
+    if (!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}$/.test(v)) { toast("ფორმატი: 00:00-07:00"); return; }
+    liveSetting({ night: v });
+  });
+  $("#live-trust-all").addEventListener("click", () => {
+    if (!confirm("ყველა ახლანდელი მოწყობილობა მოვნიშნო ნაცნობად?")) return;
+    apiJson("/api/live/trust", { method: "POST", json: { all: true } })
+      .then((r) => { toast(`${r.count} მოწყობილობა — ნაცნობია`); loadLive(); }).catch((e) => toast(e.message));
+  });
+  $("#live-iot").addEventListener("click", () => runIotCheck());
   $("#live-scan").addEventListener("click", () => apiJson("/api/live/scan", { method: "POST", json: {} })
     .then(() => { toast("სკანირება დაიწყო"); setTimeout(loadLive, 1500); })
     .catch((e) => toast(e.message)));
@@ -1511,7 +1701,11 @@ async function init() {
   });
 
   navigator.serviceWorker?.addEventListener("message", (e) => { if (e.data?.type === "alert") loadOverview(); });
-  setInterval(() => { if (!document.hidden && !$("#app").hidden) loadOverview(); }, 60_000);
+  setInterval(() => {
+    if (document.hidden || $("#app").hidden) return;
+    loadOverview();
+    if (state.view === "dash") loadMap();  // live up/down and link load on the map
+  }, 60_000);
 
   const me = await apiJson("/api/me").catch(() => ({}));
   if (me.authenticated) showApp();

@@ -343,6 +343,10 @@ def jobs(monitoring):
         res = await asyncio.to_thread(scan, "", s.vendors)
         s.state.set("home_last_scan", res)
         new = HomeTracker(s.state, s.vendors).process({SITE: [(e["ip"], e["mac"]) for e in res["devices"] if e["mac"]]})
+        from . import livedevices
+
+        if livedevices.ENGINE is not None and livedevices.ENGINE.settings()["alert_unknown"]:
+            new = []  # Live Devices already announces unknown devices within seconds: no second alert for the same one
         if new:
             kinds = {e["ip"]: e["kind"] for e in res["devices"]}
             for n in new:

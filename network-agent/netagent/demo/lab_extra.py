@@ -221,8 +221,13 @@ def dhcp_pool(faults: dict) -> str:
             "Pool VOICE :\n Total addresses                : 254\n Leased addresses               : 12\n")
 
 
+_FAULTS: dict = {}
+
+
 def extend(devices: dict, faults: dict) -> None:
     """Add the v0.9 outputs/handlers to the FakeDevices built by lab.build_devices."""
+    global _FAULTS
+    _FAULTS = faults
     for name in ("R1", "SW-Core-1", "SW-Access-2"):
         d = devices[name]
         d.outputs["show interfaces"] = lambda n=name: show_interfaces(n, faults)
@@ -263,10 +268,27 @@ _SUBMODES = ("interface ", "router ", "line ", "ip access-list ", "vlan ", "poli
 def _commit(dev, lines: list[str]) -> None:
     if not lines:
         return
-    cfg = dev.outputs.get("show running-config", "")
-    head, sep, _ = cfg.rpartition("\nend")
-    dev.outputs["show running-config"] = (head if sep else cfg) + "\n" + "\n".join(lines) + "\n!\nend"
     dev.applied.extend(lines)
+    cfg = dev.outputs.get("show running-config", "")
+    rows = cfg.split("\n")
+    for ln in [x for x in lines if x.startswith("no ")]:  # top-level "no X" removes line X, as on a real switch
+        if ln[3:] in rows:
+            rows.remove(ln[3:])
+            lines = [x for x in lines if x != ln]
+    cfg = "\n".join(rows)
+    head, sep, _ = cfg.rpartition("\nend")
+    dev.outputs["show running-config"] = (head if sep else cfg) + ("\n" + "\n".join(lines) if lines else "") + "\n!\nend"
+    # shutdown / no shutdown recovers an err-disabled port (unless the scenario keeps the loop in place)
+    errdis = dev.outputs.get("show interfaces status err-disabled")
+    if isinstance(errdis, str) and not _FAULTS.get("errdisable_sticky"):
+        port = None
+        for ln in lines:
+            low = ln.strip().lower()
+            if low.startswith("interface "):
+                port = ln.strip().split(None, 1)[1].lower()
+            elif low == "no shutdown" and port:
+                errdis = "\n".join(r for r in errdis.splitlines() if not r.lower().startswith(port + " "))
+        dev.outputs["show interfaces status err-disabled"] = errdis
 
 
 def interact(dev, line: str, st: dict):

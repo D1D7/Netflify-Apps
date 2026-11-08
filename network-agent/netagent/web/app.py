@@ -381,10 +381,55 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         if is_viewer(request.state.who):
             return JSONResponse({"error": DENIED}, status_code=403)
         body = await _json(request)
-        changes = {k: body[k] for k in ("interface", "ping_interval", "scan_interval", "offline_after") if k in body}
+        changes = {k: body[k] for k in ("interface", "ping_interval", "scan_interval", "offline_after",
+                                        "alert_unknown", "night_alerts", "night") if k in body}
         result = engine.update_settings(changes)
         log_event(settings.audit_log_path, user=request.state.who, tool="live_settings", args=changes, ok=True)
         return result
+
+    @app.get("/api/live/timeline")
+    async def live_timeline(key: str = "", days: int = 1):
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        data = engine.timeline(key[:64], days)
+        return data if data is not None else JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/api/live/trust")
+    async def live_trust(request: Request):
+        from ..permissions import DENIED, is_viewer
+
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        if body.get("all"):
+            n = engine.trust_all(request.state.who)
+            log_event(settings.audit_log_path, user=request.state.who, tool="live_trust_all", args={"count": n}, ok=True)
+            return {"ok": True, "count": n}
+        key = str(body.get("key", ""))[:64]
+        if not engine.set_trust(key, bool(body.get("trusted", True)), request.state.who):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        log_event(settings.audit_log_path, user=request.state.who, tool="live_trust", args={"key": key, "trusted": bool(body.get("trusted", True))}, ok=True)
+        return {"ok": True}
+
+    @app.get("/api/topology")
+    async def topology_map(refresh: int = 0):
+        from ..features.livemap import build_map
+
+        try:
+            return await asyncio.to_thread(build_map, services, bool(refresh))
+        except Exception as exc:  # noqa: BLE001 - the map is optional: explain instead of a 500
+            log.info("topology map: %s", exc)
+            return JSONResponse({"error": f"რუკა ვერ აიგო: {type(exc).__name__}"}, status_code=503)
+
+    @app.get("/api/iot")
+    async def iot_last():
+        from ..features.iotcheck import KEY
+
+        return services.state.get(KEY) or {"devices": {}, "meta": {}}
 
     @app.get("/api/live/export.csv")
     async def live_export():

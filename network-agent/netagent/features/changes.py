@@ -351,6 +351,10 @@ def approve_cmd(s, args, user) -> Result:
         res = apply_change(s, c)
     except Exception as exc:  # noqa: BLE001
         res = {"status": "failed", "log": [f"❌ {type(exc).__name__}: {exc}"]}
+    if c.get("heal"):  # self-healing fix: check the problem is gone, roll back automatically if not
+        from .selfheal import after_apply
+
+        res = after_apply(s, c, res)
     c = _update(s.state, c["id"], **res)
     log_event(settings.audit_log_path, user=user, tool="config_change_applied", args={"id": c["id"], "device": c["device"],
               "commands": c["commands"], "status": c["status"]}, ok=c["status"] in {"applied", "saved"}, device_access=True)
@@ -385,9 +389,28 @@ def save_cmd(s, args, user) -> Result:
     return Result(f"💾 ცვლილება #{c['id']} შენახულია {c['device']}-ზე (startup-config).")
 
 
-def undo_cmd(s, args, user) -> Result:
+def rollback_change(s, c: dict) -> str:
+    """Restore the configuration saved before change c (Cisco: configure replace; Junos: rollback 1)."""
     from ..tools import device as dev
 
+    d = s.inventory().get(c["device"])
+    fam = family(d.device_type)
+    if fam == "mikrotik":
+        raise CommandError("RouterOS-ზე ავტომატური დაბრუნება არ არის. ასლი: netagent-rollback.rsc (Files) — ან სთხოვე AI-ს საპირისპირო ბრძანებები.")
+    conn = dev._connect(s.inventory(), d)  # noqa: SLF001
+    try:
+        if fam == "ios":
+            return _answer_prompts(conn, conn.send_command_timing(f"configure replace {ROLLBACK_FILE} force"))
+        conn.config_mode()
+        conn.send_command_timing("rollback 1")
+        out = conn.commit(comment=f"netagent undo {c['id']}")
+        conn.exit_config_mode()
+        return out
+    finally:
+        conn.disconnect()
+
+
+def undo_cmd(s, args, user) -> Result:
     if not args or not args[0].isdigit():
         raise CommandError("გამოყენება: /undo 7 <PIN>")
     c = get(s.state, int(args[0]))
@@ -396,21 +419,7 @@ def undo_cmd(s, args, user) -> Result:
     if len(args) < 2:
         return Result(f"🔐 დასაბრუნებლად ჩაწერე PIN: `/undo {c['id']} 123456`")
     check_pin(s.state, args[1])
-    d = s.inventory().get(c["device"])
-    fam = family(d.device_type)
-    if fam == "mikrotik":
-        raise CommandError("RouterOS-ზე ავტომატური დაბრუნება არ არის. ასლი: netagent-rollback.rsc (Files) — ან სთხოვე AI-ს საპირისპირო ბრძანებები.")
-    conn = dev._connect(s.inventory(), d)  # noqa: SLF001
-    try:
-        if fam == "ios":
-            out = _answer_prompts(conn, conn.send_command_timing(f"configure replace {ROLLBACK_FILE} force"))
-        else:
-            conn.config_mode()
-            conn.send_command_timing("rollback 1")
-            out = conn.commit(comment=f"netagent undo {c['id']}")
-            conn.exit_config_mode()
-    finally:
-        conn.disconnect()
+    out = rollback_change(s, c)
     c = _update(s.state, c["id"], status="rolledback", log=c["log"] + [f"↩️ დაბრუნდა ({user})"])
     log_event(settings.audit_log_path, user=user, tool="config_change_undo", args={"id": c["id"]}, ok=True, device_access=True)
     return Result(f"↩️ ცვლილება #{c['id']} დაბრუნდა {c['device']}-ზე.\n{out.strip()[-200:]}")

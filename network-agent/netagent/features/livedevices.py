@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..newdevices import canonical_mac
-from ..result import Button, Result
+from ..result import Button, CommandError, Result
 from . import env_int, homenet
 
 log = logging.getLogger("netagent.live")
@@ -43,7 +43,14 @@ log = logging.getLogger("netagent.live")
 IS_WINDOWS = os.name == "nt"
 SETTINGS_KEY = "live_settings"
 KNOWN_KEY = "live_known"
-DEFAULTS = {"interface": "", "ping_interval": 3, "scan_interval": 60, "offline_after": 3}
+DEFAULTS = {"interface": "", "ping_interval": 3, "scan_interval": 60, "offline_after": 3,
+            "alert_unknown": True, "night_alerts": False, "night": "00:00-07:00"}
+TRUST_KEY = "live_trust"
+BUCKET = 300                 # online history resolution: 5 minutes
+PORT_REFRESH = 6 * 3600      # re-check which services a device offers every 6 hours
+UNKNOWN_REALERT = 6 * 3600   # an unknown device coming back is announced at most every 6 hours
+NIGHT_REALERT = 3600
+ALERTS_PER_10_MIN = 10
 LIMITS = {"ping_interval": (1, 60), "scan_interval": (15, 3600), "offline_after": (1, 20)}
 MAX_HOSTS = 1024          # bigger subnets: only the /24 around this PC is swept
 HISTORY = 600             # ping samples kept per device (30 min at 3 s)
@@ -429,6 +436,109 @@ def scan_targets(iface: dict) -> tuple[list[str], str]:
 
 
 # =========================================================================================================
+# what kind of device is it?
+# =========================================================================================================
+KIND_PORTS = (21, 22, 23, 80, 139, 443, 445, 515, 554, 631, 1883, 2323, 3389, 5000, 5001, 5555, 7000, 8000, 8008, 8009,
+              8291, 8554, 9100, 9999, 32400, 34567, 37777, 62078)
+KINDS = {  # key: (label, app icon)
+    "self": ("ეს კომპიუტერი", "monitor"), "router": ("როუტერი", "network"), "pc": ("კომპიუტერი", "monitor"),
+    "phone": ("ტელეფონი / პლანშეტი", "smartphone"), "tv": ("ტელევიზორი / მედია", "tv"), "printer": ("პრინტერი", "printer"),
+    "camera": ("კამერა", "camera"), "iot": ("ჭკვიანი სახლი (IoT)", "chip"), "nas": ("NAS / სერვერი", "hdd"),
+    "network": ("ქსელური მოწყობილობა", "network"), "console": ("სათამაშო კონსოლი", "gamepad"), "": ("ტიპი უცნობია", "help"),
+}
+_H = lambda *words: re.compile("|".join(words), re.I)  # noqa: E731
+_HOST = [
+    ("console", _H(r"xbox", r"playstation", r"\bps[345]\b", r"nintendo")),
+    ("printer", _H(r"epson", r"\bhp[-_]?\w*print", r"laserjet", r"officejet", r"deskjet", r"canon", r"brother", r"printer", r"kyocera", r"xerox")),
+    ("camera", _H(r"\bcam", r"ipcam", r"hikvision", r"dahua", r"ezviz", r"reolink", r"tapo[-_]?c", r"nvr", r"dvr")),
+    ("tv", _H(r"\btv\b", r"[-_]tv", r"chromecast", r"roku", r"bravia", r"webos", r"tizen", r"android[-_]?tv", r"appletv", r"apple-tv", r"firetv", r"mi[-_]?box", r"shield")),
+    ("iot", _H(r"esp[-_]?\w", r"tasmota", r"shelly", r"sonoff", r"tuya", r"wled", r"hue", r"nest", r"echo", r"alexa", r"homepod", r"plug", r"bulb")),
+    ("phone", _H(r"iphone", r"ipad", r"android", r"galaxy", r"\bsm-[a-z]\d", r"pixel", r"redmi", r"xiaomi", r"huawei", r"oppo", r"vivo", r"oneplus", r"phone", r"poco")),
+    ("pc", _H(r"desktop-", r"laptop-", r"\bwin-", r"macbook", r"\bimac", r"mac-?mini", r"thinkpad", r"\bpc\b", r"workstation")),
+    ("nas", _H(r"synology", r"diskstation", r"qnap", r"\bnas\b", r"raspberrypi", r"\bserver\b", r"truenas", r"unraid")),
+]
+_VENDOR = [
+    ("camera", _H(r"hikvision", r"dahua", r"ezviz", r"reolink", r"uniview", r"axis comm", r"hanwha")),
+    ("printer", _H(r"seiko epson", r"canon", r"brother", r"kyocera", r"xerox", r"lexmark", r"ricoh")),
+    ("iot", _H(r"espressif", r"tuya", r"shelly", r"sonoff", r"itead", r"signify", r"philips lighting", r"nest labs", r"ring", r"wiz", r"amazon")),
+    ("nas", _H(r"synology", r"qnap", r"raspberry", r"western digital")),
+    ("network", _H(r"tp-link", r"ubiquiti", r"netgear", r"d-link", r"zyxel", r"mikrotik", r"routerboard", r"cisco", r"aruba", r"tenda", r"mercusys")),
+    ("console", _H(r"nintendo", r"sony interactive")),
+    ("tv", _H(r"roku", r"lg electronics", r"tcl", r"hisense", r"qingdao intelligent", r"vizio", r"sony", r"skyworth", r"vestel")),
+    ("pc", _H(r"\bintel\b", r"realtek", r"dell", r"lenovo", r"hewlett", r"micro-star", r"gigabyte", r"biostar", r"asrock", r"asustek", r"microsoft", r"liteon")),
+    ("phone", _H(r"apple", r"samsung", r"xiaomi", r"huawei", r"oppo", r"vivo", r"oneplus", r"motorola", r"google", r"honor", r"realme", r"nothing")),
+]
+
+
+def classify(vendor: str = "", hostname: str = "", ports=(), gateway: bool = False, me: bool = False) -> str:
+    """Device kind from the evidence we have: open service ports beat names, names beat the MAC vendor."""
+    from ..macvendor import RANDOM_LABEL
+
+    ports = set(ports or ())
+    if me:
+        return "self"
+    if gateway:
+        return "router"
+    if ports & {554, 8554, 37777, 34567}:
+        return "camera"
+    if ports & {9100, 631, 515}:
+        return "printer"
+    if 62078 in ports:
+        return "phone"
+    if ports & {8008, 8009, 5555}:
+        return "tv"
+    if 8291 in ports:
+        return "network"
+    for kind, rx in _HOST:
+        if hostname and rx.search(hostname):
+            return kind
+    if 7000 in ports and not ports & {22, 139, 445, 3389}:  # AirPlay receiver that is not a computer: TV / media box
+        return "tv"
+    if ports & {5000, 5001, 32400}:
+        return "nas"
+    if 1883 in ports:
+        return "iot"
+    if ports & {3389, 445, 139}:
+        return "pc"
+    if vendor == RANDOM_LABEL:
+        return "phone"  # randomized ("private") MACs are phones and laptops, almost always phones
+    for kind, rx in _VENDOR:
+        if vendor and rx.search(vendor):
+            return kind
+    return ""
+
+
+def probe_ports(ip: str, ports=KIND_PORTS, timeout: float = 0.6) -> list[int]:
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        return [p for p, ok in zip(ports, pool.map(lambda p: homenet._probe(ip, p, timeout), ports)) if ok]  # noqa: SLF001
+
+
+def runs(buckets) -> list[list[int]]:
+    """{1, 2, 3, 7} -> [[1, 3], [7, 7]] (compact storage of the online history)."""
+    out: list[list[int]] = []
+    for b in sorted(buckets):
+        if out and b == out[-1][1] + 1:
+            out[-1][1] = b
+        else:
+            out.append([b, b])
+    return out
+
+
+def unruns(items) -> set[int]:
+    return {b for a, z in (items or []) for b in range(int(a), int(z) + 1) if z - a < 100_000}
+
+
+def in_window(window: str, when: datetime) -> bool:
+    """'00:00-07:00' (may wrap midnight, e.g. '22:30-06:00')."""
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", window or "")
+    if not m:
+        return False
+    a, b = int(m[1]) * 60 + int(m[2]), int(m[3]) * 60 + int(m[4])
+    now = when.hour * 60 + when.minute
+    return a <= now < b if a <= b else now >= a or now < b
+
+
+# =========================================================================================================
 # the engine
 # =========================================================================================================
 @dataclass
@@ -448,6 +558,11 @@ class Device:
     new_until: float = 0.0
     names_at: float = 0.0
     history: deque = field(default_factory=lambda: deque(maxlen=HISTORY))
+    kind: str = ""
+    ports: list = field(default_factory=list)
+    ports_at: float = 0.0
+    seen: set = field(default_factory=set)   # 5-minute buckets in which the device answered
+    alerted_at: float = 0.0
 
     def stats(self) -> dict:
         vals = [v for _, v in self.history]
@@ -460,14 +575,19 @@ class Device:
 class LiveEngine:
     def __init__(self, state, vendors=None, prober: Prober | None = None, names=resolve_name,
                  interfaces=list_interfaces, local_ip=homenet.local_ip, gateway=homenet.default_gateway,
-                 arp_table=homenet.read_arp, labels=None, log_path: Path | None = None, clock=time.time) -> None:
+                 arp_table=homenet.read_arp, labels=None, log_path: Path | None = None, clock=time.time,
+                 ports=probe_ports, notify=None) -> None:
         self.state, self.vendors = state, vendors
         self.prober = prober or make_prober()
         self.names, self.interfaces_fn, self.local_ip_fn = names, interfaces, local_ip
         self.gateway_fn, self.arp_table_fn = gateway, arp_table
         self.labels = labels or (lambda: homenet.device_names(state))
         self.log_path, self.clock = log_path, clock
+        self.ports_fn = ports
+        self.notify = notify        # fn(text, buttons) -> push/Telegram alert; set by the server
+        self._alert_times: deque = deque(maxlen=ALERTS_PER_10_MIN)
         self.devices: dict[str, Device] = {}
+        self._trust_cache: dict = {}
         self.events: deque = deque(maxlen=EVENTS)
         self.lock = threading.RLock()
         self.iface: dict | None = None
@@ -496,6 +616,10 @@ class LiveEngine:
                 s[k] = min(max(int(s[k]), lo), hi)
             except (TypeError, ValueError):
                 s[k] = DEFAULTS[k]
+        for k in ("alert_unknown", "night_alerts"):
+            s[k] = s[k] if isinstance(s[k], bool) else str(s[k]).lower() in {"1", "true", "on", "yes"}
+        if not re.fullmatch(r"\d{1,2}:\d{2}-\d{1,2}:\d{2}", str(s["night"]).replace(" ", "")):
+            s["night"] = DEFAULTS["night"]
         return s
 
     def update_settings(self, changes: dict) -> dict:
@@ -526,7 +650,9 @@ class LiveEngine:
             self.devices[key] = Device(key=key, ip=r.get("ip", ""), mac=r.get("mac", ""), vendor=r.get("vendor", ""),
                                        hostname=r.get("hostname", ""), hostname_source=r.get("hostname_source", ""),
                                        first_seen=r.get("first_seen", now), last_seen=r.get("last_seen", 0),
-                                       icmp=r.get("icmp", False), names_at=0.0)
+                                       icmp=r.get("icmp", False), names_at=0.0, kind=r.get("kind", ""),
+                                       ports=r.get("ports", []), ports_at=r.get("ports_at", 0.0),
+                                       seen=unruns(r.get("seen")))
         if self.devices:
             self.baseline = False  # we have seen this network before: real newcomers get the badge
             self._restarted = True
@@ -535,14 +661,77 @@ class LiveEngine:
         with self.lock:
             data = {d.key: {"ip": d.ip, "mac": d.mac, "vendor": d.vendor, "hostname": d.hostname,
                             "hostname_source": d.hostname_source, "first_seen": d.first_seen,
-                            "last_seen": d.last_seen, "icmp": d.icmp} for d in self.devices.values() if d.last_seen}
+                            "last_seen": d.last_seen, "icmp": d.icmp, "kind": d.kind, "ports": d.ports,
+                            "ports_at": d.ports_at, "seen": runs(self._pruned(d))} for d in self.devices.values() if d.last_seen}
         self.state.set(KNOWN_KEY, data)
+
+    def _pruned(self, d: Device) -> set:
+        oldest = int((self.clock() - env_int("NETAGENT_LIVE_RETENTION_DAYS", 7) * 86400) // BUCKET)
+        d.seen = {b for b in d.seen if b >= oldest}
+        return d.seen
+
+    def _mark(self, d: Device, now: float) -> None:
+        d.seen.add(int(now // BUCKET))
+
+    # -- trusted ("mine") devices ------------------------------------------------------------------------
+    def trusted(self) -> dict:
+        return self.state.get(TRUST_KEY) or {}
+
+    def set_trust(self, key: str, trusted: bool, user: str = "") -> bool:
+        with self.lock:
+            if key not in self.devices:
+                return False
+        cur = self.trusted()
+        if trusted:
+            cur[key] = {"by": user, "ts": self.clock()}
+        else:
+            cur.pop(key, None)
+        self.state.set(TRUST_KEY, cur)
+        return True
+
+    def trust_all(self, user: str = "", source: str = "") -> int:
+        with self.lock:
+            keys = [d.key for d in self.devices.values() if not self.iface or self._in_subnet(d.ip)]
+        cur = self.trusted()
+        for k in keys:
+            cur.setdefault(k, {"by": user or source, "ts": self.clock()})
+        self.state.set(TRUST_KEY, cur)
+        return len(keys)
+
+    # -- alerts ------------------------------------------------------------------------------------------
+    def _maybe_alert(self, kind: str, d: Device) -> None:
+        """Unknown device joined/returned; or (night mode) any device joined at night. Rate-limited."""
+        if self.notify is None or kind not in {"new", "online"} or self._restarted:
+            return
+        s, now = self.settings(), self.clock()
+        known = d.key in self.trusted()
+        if not known and s["alert_unknown"] and (kind == "new" or now - d.alerted_at > UNKNOWN_REALERT):
+            head = "🚨 **უცნობი მოწყობილობა ქსელში**" if kind == "new" else "🚨 **უცნობი მოწყობილობა დაბრუნდა ქსელში**"
+        elif known and s["night_alerts"] and in_window(s["night"], datetime.fromtimestamp(now)) \
+                and now - d.alerted_at > NIGHT_REALERT:
+            head = f"🌙 **ღამით ქსელს შეუერთდა** ({s['night']})"
+        else:
+            return
+        while self._alert_times and now - self._alert_times[0] > 600:
+            self._alert_times.popleft()
+        if len(self._alert_times) >= ALERTS_PER_10_MIN:
+            return
+        self._alert_times.append(now)
+        d.alerted_at = now
+        what = " · ".join(x for x in (d.ip, d.mac or "MAC N/A", d.vendor, KINDS.get(d.kind, KINDS[""])[0] if d.kind else "",
+                                       d.hostname) if x)
+        buttons = [Button("✓ ჩემია (ნაცნობი)", f"/trust {d.key}"), Button("📡 Live", "/live")] if not known else [Button("📡 Live", "/live")]
+        try:
+            self.notify(f"{head}\n{what}", buttons)
+        except Exception:  # noqa: BLE001 - an alert must never break the scanner
+            log.exception("live alert failed")
 
     # -- events ----------------------------------------------------------------------------------------
     def _event(self, kind: str, d: Device) -> None:
         ev = {"ts": self.clock(), "event": kind, "ip": d.ip, "mac": d.mac or "N/A", "vendor": d.vendor,
               "hostname": d.hostname}
         self.events.appendleft(ev)
+        self._maybe_alert(kind, d)
         if not self.log_path:
             return
         try:
@@ -627,6 +816,10 @@ class LiveEngine:
                                 self._event("offline", d)
                 self._restarted = False
             self.last_scan = now
+            if self.state.get(TRUST_KEY) is None:  # first run ever: what is already here is yours
+                n = self.trust_all(source="auto")
+                self.notices.append(f"{n} მოწყობილობა, რომელიც უკვე იყო ქსელში, ავტომატურად მოინიშნა ნაცნობად — "
+                                    "შეამოწმე სია და საჭიროებისას მოხსენი.")
             self._resolve_names()
             self._save_known()
         finally:
@@ -661,6 +854,7 @@ class LiveEngine:
         d.latency_ms = ms
         d.icmp = d.icmp or ms is not None
         d.history.append((now, ms))
+        self._mark(d, now)
         if is_new and not self.baseline:  # the first sweep on a network only learns what is already there
             d.new_until = now + NEW_SECONDS
             self._event("new", d)
@@ -701,6 +895,7 @@ class LiveEngine:
             if mine:
                 mine.online, mine.last_seen, mine.latency_ms = True, now, 0.05
                 mine.history.append((now, 0.05))
+                self._mark(mine, now)
         futures = []
         for key, ip in todo:
             f = self._ping_pool.submit(self._check, key, ip)
@@ -728,6 +923,10 @@ class LiveEngine:
                 if self.vendors:
                     d.vendor = self.vendors.lookup(mac) or ""
                 self.devices[mac] = d
+                trust = self.trusted()
+                if key in trust and mac not in trust:
+                    trust[mac] = trust.pop(key)
+                    self.state.set(TRUST_KEY, trust)
                 changed = True
             d.history.append((now, ms))
             if alive:
@@ -738,6 +937,7 @@ class LiveEngine:
                     changed = True
                 d.misses, d.last_seen, d.latency_ms = 0, now, ms
                 d.icmp = d.icmp or ms is not None
+                self._mark(d, now)
             else:
                 d.misses += 1
                 d.latency_ms = None
@@ -752,22 +952,44 @@ class LiveEngine:
     def _resolve_names(self) -> None:
         now = self.clock()
         with self.lock:
-            todo = [d for d in self.devices.values() if d.online and now - d.names_at > NAME_REFRESH]
+            todo = [d for d in self.devices.values() if d.online and (now - d.names_at > NAME_REFRESH
+                                                                      or now - d.ports_at > PORT_REFRESH)]
             for d in todo:
-                d.names_at = now
+                d.names_at = d.names_at if now - d.names_at <= NAME_REFRESH else now
+            me = self.iface["ip"] if self.iface else ""
+            for d in self.devices.values():  # a kind for everyone right away (refined once ports are known)
+                if not d.kind:
+                    d.kind = classify(d.vendor, d.hostname, d.ports, d.ip == self.gateway, d.ip == me)
         for d in todo:
             self._name_pool.submit(self._name_one, d.key, d.ip)
 
     def _name_one(self, key: str, ip: str) -> None:
+        now = self.clock()
+        with self.lock:
+            d = self.devices.get(key)
+            need_ports = bool(d and now - d.ports_at > PORT_REFRESH)
+            me = bool(self.iface and ip == self.iface["ip"])
+        name = source = ""
         try:
-            name, source = self.names(ip)
+            if not me:
+                name, source = self.names(ip)
         except Exception:  # noqa: BLE001
-            return
-        if name:
-            with self.lock:
-                d = self.devices.get(key)
-                if d and d.ip == ip:
-                    d.hostname, d.hostname_source = name, source
+            pass
+        ports = None
+        if need_ports and not me:
+            try:
+                ports = self.ports_fn(ip)
+            except Exception:  # noqa: BLE001
+                ports = None
+        with self.lock:
+            d = self.devices.get(key)
+            if not d or d.ip != ip:
+                return
+            if name:
+                d.hostname, d.hostname_source = name, source
+            if ports is not None:
+                d.ports, d.ports_at = sorted(ports), now
+            d.kind = classify(d.vendor, d.hostname, d.ports, ip == self.gateway, me)
 
     # -- background thread -----------------------------------------------------------------------------
     def start(self) -> "LiveEngine":
@@ -815,7 +1037,9 @@ class LiveEngine:
                 "status": "online" if d.online else "offline", "latency_ms": d.latency_ms, "icmp": d.icmp,
                 "first_seen": d.first_seen, "last_seen": d.last_seen, "new": d.new_until > now,
                 "self": bool(self.iface and d.ip == self.iface["ip"]), "gateway": d.ip == self.gateway,
-                "misses": d.misses, "spark": [v for _, v in list(d.history)[-30:]]}
+                "misses": d.misses, "spark": [v for _, v in list(d.history)[-30:]],
+                "kind": d.kind, "kind_label": KINDS.get(d.kind, KINDS[""])[0], "icon": KINDS.get(d.kind, KINDS[""])[1],
+                "ports": d.ports, "trusted": d.key in self._trust_cache}
 
     def snapshot(self) -> dict:
         now = self.clock()
@@ -823,6 +1047,7 @@ class LiveEngine:
             labels = self.labels() or {}
         except Exception:  # noqa: BLE001
             labels = {}
+        self._trust_cache = self.trusted()
         with self.lock:
             # only the subnet being watched (records from another interface stay saved for when you switch back)
             rows = [self._row(d, labels, now) for d in self.devices.values() if not self.iface or self._in_subnet(d.ip)]
@@ -832,6 +1057,33 @@ class LiveEngine:
                 "devices": rows, "online": sum(r["online"] for r in rows), "offline": sum(not r["online"] for r in rows),
                 "method": self.prober.name, "notices": self.notices, "scanning": self.scanning,
                 "last_scan": self.last_scan, "now": now, "events": events}
+
+    def timeline(self, key: str, days: int = 1) -> dict | None:
+        """Online history: 5-minute slots for a day, hourly shares (0..1) for longer periods."""
+        days = 7 if days > 1 else 1
+        slot = BUCKET if days == 1 else 3600
+        now = self.clock()
+        with self.lock:
+            d = self.devices.get(key)
+            if d is None:
+                return None
+            seen = set(d.seen)
+            first = d.first_seen
+        n = days * 86400 // slot
+        end = (int(now) // slot + 1) * slot
+        start = end - n * slot
+        per = slot // BUCKET
+        values = []
+        for i in range(n):
+            a = start + i * slot
+            if a + slot <= first:
+                values.append(None)  # not known yet
+                continue
+            b0 = a // BUCKET
+            values.append(round(sum((b0 + j) in seen for j in range(per)) / per, 2))
+        online = sum(v for v in values if v)
+        return {"key": key, "days": days, "slot_seconds": slot, "start": start, "values": values,
+                "online_hours": round(online * slot / 3600, 1)}
 
     def history(self, key: str) -> dict | None:
         with self.lock:
@@ -844,11 +1096,12 @@ class LiveEngine:
         snap = self.snapshot()
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["status", "ip", "mac", "vendor", "hostname", "name", "ping_ms", "first_seen", "last_seen"])
+        w.writerow(["status", "ip", "mac", "vendor", "hostname", "name", "ping_ms", "first_seen", "last_seen", "type", "known"])
         fmt = lambda t: datetime.fromtimestamp(t).isoformat(sep=" ", timespec="seconds") if t else ""  # noqa: E731
         for r in snap["devices"]:
             w.writerow([r["status"], r["ip"], r["mac"], r["vendor"], r["hostname"], r["label"],
-                        "" if r["latency_ms"] is None else r["latency_ms"], fmt(r["first_seen"]), fmt(r["last_seen"])])
+                        "" if r["latency_ms"] is None else r["latency_ms"], fmt(r["first_seen"]), fmt(r["last_seen"]),
+                        r["kind_label"], "yes" if r["trusted"] else "no"])
         return buf.getvalue()
 
 
@@ -865,7 +1118,17 @@ async def start(services, monitoring) -> list:
         return []
     from ..config import settings
 
-    ENGINE = LiveEngine(services.state, services.vendors, log_path=settings.audit_log_path.parent / "live-devices.log")
+    import asyncio
+
+    from ..monitoring import Alert
+
+    loop = asyncio.get_running_loop()
+
+    def notify(text: str, buttons: list) -> None:  # called from the scanner thread
+        asyncio.run_coroutine_threadsafe(monitoring.emit(Alert("security", text, [], mutable=False, buttons=buttons)), loop)
+
+    ENGINE = LiveEngine(services.state, services.vendors, log_path=settings.audit_log_path.parent / "live-devices.log",
+                        notify=notify)
     ENGINE.start()
     log.info("live devices: %s", ENGINE.prober.name)
     return [ENGINE]
@@ -876,6 +1139,42 @@ def _ago(ts: float, now: float) -> str:
     return f"{s} წმ" if s < 60 else f"{s // 60} წთ" if s < 3600 else f"{s // 3600} სთ"
 
 
+def _find(target: str) -> str:
+    """ip / MAC / key -> device key."""
+    from ..newdevices import canonical_mac
+
+    t = target.strip().lower()
+    with ENGINE.lock:
+        for d in ENGINE.devices.values():
+            if t in {d.key.lower(), d.ip, (d.mac or "").lower()}:
+                return d.key
+        try:
+            mac = canonical_mac(t)
+            if mac in ENGINE.devices:
+                return mac
+        except Exception:  # noqa: BLE001
+            pass
+    return ""
+
+
+def trust_cmd(s, args, user, trusted: bool = True) -> Result:
+    if ENGINE is None:
+        return Result("Live Devices გამორთულია.")
+    if not args:
+        raise CommandError("გამოყენება: /trust 192.168.1.20 (ან MAC) · /trust all — ყველა ახლანდელი")
+    if trusted and args[0].lower() in {"all", "ყველა"}:
+        return Result(f"✓ {ENGINE.trust_all(user)} მოწყობილობა მოინიშნა ნაცნობად.")
+    key = _find(args[0])
+    if not key or not ENGINE.set_trust(key, trusted, user):
+        raise CommandError(f"{args[0]} Live Devices-ის სიაში ვერ ვიპოვე")
+    return Result(f"✓ {args[0]} — ნაცნობია, მასზე შეტყობინება აღარ მოვა." if trusted
+                  else f"{args[0]} — ნაცნობებიდან მოიხსნა: დაბრუნებისას შეგატყობინებ.")
+
+
+def untrust_cmd(s, args, user) -> Result:
+    return trust_cmd(s, args, user, trusted=False)
+
+
 def live_cmd(s, args, user) -> Result:
     if ENGINE is None:
         return Result("Live Devices გამორთულია (NETAGENT_LIVE=off) ან სერვერი არ არის გაშვებული.")
@@ -884,15 +1183,17 @@ def live_cmd(s, args, user) -> Result:
     lines = [f"📡 **Live Devices** — {snap['online']} ონლაინ, {snap['offline']} ოფლაინ · {iface.get('network', '?')}"]
     for r in snap["devices"]:
         name = r["label"] or r["hostname"] or r["vendor"] or ""
+        name = f"{r['kind_label']} · {name}" if r["kind"] and name else name or (r["kind_label"] if r["kind"] else "")
         ms = "—" if r["latency_ms"] is None else f"{r['latency_ms']:.1f} ms"
         dot = "🟢" if r["online"] else "🔴"
         lines.append(f"{dot} {r['ip']} · {r['mac']} · {ms}" + (f" · {name}" if name else "")
-                     + (" · 🆕" if r["new"] else "") + ("" if r["online"] else f" · ბოლოს {_ago(r['last_seen'], snap['now'])} წინ"))
+                     + (" · 🆕" if r["new"] else "") + ("" if r["trusted"] else " · ❓უცნობი") + ("" if r["online"] else f" · ბოლოს {_ago(r['last_seen'], snap['now'])} წინ"))
     return Result("\n".join(lines[:60]), buttons=[Button("🔍 სკანი", "/scan")])
 
 
-COMMANDS = {"live": live_cmd}
-HELP = ["/live — Live Devices: ვინ არის ქსელში ახლა (IP, MAC, ping) · აპში ცალკე ჩანართი „Live“"]
+COMMANDS = {"live": live_cmd, "trust": trust_cmd, "untrust": untrust_cmd}
+HELP = ["/live — Live Devices: ვინ არის ქსელში ახლა (IP, MAC, ping) · აპში ცალკე ჩანართი „Live“",
+        "/trust 192.168.1.20 — ნაცნობი მოწყობილობა (უცნობზე მოდის შეტყობინება) · /untrust · /trust all"]
 TOOLS = [
     ({"name": "live_devices",
       "description": "Devices on the local network right now, measured every few seconds by NetAgent: IP, MAC, vendor, "

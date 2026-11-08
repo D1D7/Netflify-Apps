@@ -57,7 +57,8 @@ def engine(tmp_path, net, vendors=None, clock=None, arp_table=None, names=None, 
     return lv.LiveEngine(state or StateStore(tmp_path / "s.json"), vendors, prober=net,
                          names=names or (lambda ip: ("", "")), interfaces=lambda: interfaces or [IFACE],
                          local_ip=lambda: IFACE["ip"], gateway=lambda: ROUTER, arp_table=lambda: dict(arp_table or {}),
-                         labels=lambda: {}, log_path=tmp_path / "logs" / "live-devices.log", clock=clock or Clock())
+                         labels=lambda: {}, log_path=tmp_path / "logs" / "live-devices.log", clock=clock or Clock(),
+                         ports=lambda ip: [])
 
 
 def rows(e):

@@ -51,6 +51,14 @@
     <symbol id="i-mute" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 9.6-4.8M18 9c0 6.5 2.5 8.5 2.5 8.5H8M10 21a2.2 2.2 0 0 0 4 0M3.5 3.5l17 17"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.8 9 19.5 10.8 13.8 12.6 12 18.5 10.2 12.6 4.5 10.8 10.2 9z"/></symbol>
     <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8M15.4 8.6a4.8 4.8 0 0 1 0 6.8M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16v4"/></symbol>
+    <symbol id="i-smartphone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/><path d="M10.5 18.5h3"/></symbol>
+    <symbol id="i-tv" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="12.5" rx="2"/><path d="M8 21h8M8.5 2.5 12 5l3.5-2.5"/></symbol>
+    <symbol id="i-printer" viewBox="0 0 24 24"><path d="M7 8.5V3.5h10v5M7 17.5H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8.5a2 2 0 0 1 2-2h2l1.5-2h7l1.5 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/><path d="M9.5 3v3.5M14.5 3v3.5M9.5 17.5V21M14.5 17.5V21M3 9.5h3.5M3 14.5h3.5M17.5 9.5H21M17.5 14.5H21"/></symbol>
+    <symbol id="i-hdd" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 13h18M7 16.5h.01M10.5 16.5h.01"/></symbol>
+    <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M6.5 8h11a4 4 0 0 1 3.9 4.9l-.9 4a2.6 2.6 0 0 1-4.6 1L14.5 16h-5l-1.4 1.9a2.6 2.6 0 0 1-4.6-1l-.9-4A4 4 0 0 1 6.5 8z"/><path d="M8 11v3M6.5 12.5h3M15.5 12h.01M17.5 13.5h.01"/></symbol>
     <symbol id="i-dollar" viewBox="0 0 24 24"><path d="M12 3v18M16.5 7.5c-.6-1.4-2.3-2.3-4.5-2.3-2.6 0-4.3 1.3-4.3 3.2 0 4.6 9 2.4 9 7 0 2-1.9 3.4-4.7 3.4-2.3 0-4-.9-4.6-2.6"/></symbol>
   </svg>
 
@@ -151,6 +159,17 @@
 
       <div class="isp-card" id="isp-card" hidden></div>
 
+      <div class="map-card pane-hide" id="map-card">
+        <div class="map-head">
+          <span><svg class="icon"><use href="#i-network"/></svg>ქსელის რუკა</span>
+          <button type="button" id="map-refresh" class="link-btn">კაბელების განახლება<svg class="icon"><use href="#i-refresh"/></svg></button>
+        </div>
+        <div id="map-box" class="map-box"></div>
+        <div class="map-legend"><span class="lg up">ონლაინ</span><span class="lg down">გათიშული</span><span class="lg ext">გარე მეზობელი</span>
+          <span class="lg l-ok">დატვირთვა &lt;50%</span><span class="lg l-warn">50–80%</span><span class="lg l-bad">&gt;80%</span></div>
+        <div id="map-pop" class="map-pop" hidden></div>
+      </div>
+
       <h2 class="section pane-hide">სწრაფი მოქმედებები</h2>
       <div class="actions pane-hide" id="dash-actions"></div>
 
@@ -247,10 +266,26 @@
         <button type="button" id="live-scan" class="live-btn"><svg class="icon"><use href="#i-refresh"/></svg><span>სკანი ახლა</span></button>
         <a id="live-csv" class="live-btn" href="/api/live/export.csv" download><svg class="icon"><use href="#i-download"/></svg><span>CSV</span></a>
       </div>
+      <details class="live-settings" id="live-settings">
+        <summary><svg class="icon"><use href="#i-bell"/></svg><span>შეტყობინებები, ნაცნობები, IoT</span></summary>
+        <label class="live-check"><input type="checkbox" id="live-alert-unknown"><span>უცნობი მოწყობილობის შემოსვლაზე შეტყობინება</span></label>
+        <label class="live-check"><input type="checkbox" id="live-night"><span>ღამის რეჟიმი: ამ დროს <b>ნებისმიერის</b> შემოსვლაზე შეტყობინება</span></label>
+        <label class="live-check live-night-time"><span>ღამე:</span><input id="live-night-window" type="text" inputmode="numeric" maxlength="11" placeholder="00:00-07:00"></label>
+        <div class="live-set-actions">
+          <button type="button" class="chip" id="live-trust-all"><svg class="icon"><use href="#i-check"/></svg><span>ყველა ახლანდელი — ნაცნობია</span></button>
+          <button type="button" class="chip" id="live-iot"><svg class="icon"><use href="#i-shield"/></svg><span>IoT უსაფრთხოების შემოწმება</span></button>
+        </div>
+      </details>
       <div id="live-summary" class="live-summary" aria-live="polite"></div>
       <div id="live-notices"></div>
-      <label class="search"><svg class="icon"><use href="#i-search"/></svg>
-        <input id="live-search" type="search" placeholder="ძებნა: IP, MAC, სახელი, მწარმოებელი"></label>
+      <div class="live-filter-row">
+        <label class="search"><svg class="icon"><use href="#i-search"/></svg>
+          <input id="live-search" type="search" placeholder="ძებნა: IP, MAC, სახელი, ტიპი"></label>
+        <div class="segmented" id="live-filter" role="tablist">
+          <button type="button" data-filter="all" class="on">ყველა</button>
+          <button type="button" data-filter="unknown">უცნობი</button>
+        </div>
+      </div>
       <div class="live-wrap">
         <table class="live-table">
           <thead><tr>
