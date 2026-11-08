@@ -15,7 +15,7 @@ import sys
 import uvicorn
 
 from .config import settings
-from .monitoring import Alert, MonitoringService, start_scheduler
+from .monitoring import Alert, MonitoringService, spawn, start_scheduler
 from .services import Services
 from .web.app import create_app
 from .web.auth import WebAuth
@@ -83,7 +83,7 @@ async def amain() -> None:
 
         def on_alert(device: str, text: str) -> None:
             if not services.mutes.is_muted(device):
-                asyncio.create_task(monitoring.emit(Alert("syslog", text, [device])))
+                spawn(monitoring.emit(Alert("syslog", text, [device])))
 
         try:
             syslog_transport, _ = await start_syslog(settings.syslog_host, settings.syslog_port,

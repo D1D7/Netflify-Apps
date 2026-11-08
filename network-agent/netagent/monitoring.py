@@ -159,6 +159,18 @@ class MonitoringService:
 
 # --------------------------------------------------------------------------- asyncio scheduler (app server)
 
+_BACKGROUND: set[asyncio.Task] = set()
+
+
+def spawn(coro) -> asyncio.Task:
+    """create_task that keeps a reference until the task ends: the event loop holds tasks only weakly, so a
+    fire-and-forget task (e.g. sending an alert) can otherwise be garbage-collected half-way."""
+    task = asyncio.get_running_loop().create_task(coro)
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+    return task
+
+
 
 def parse_hhmm(value: str) -> tuple[int, int] | None:
     try:

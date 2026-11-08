@@ -339,6 +339,64 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             return Response(status_code=404)
         return FileResponse(path, filename=name if download else None)
 
+    # -- Live Devices ----------------------------------------------------------------
+    def live_engine():
+        from ..features import livedevices
+
+        return livedevices.ENGINE
+
+    def live_off() -> JSONResponse:
+        return JSONResponse({"error": "Live Devices გამორთულია (NETAGENT_LIVE=off)"}, status_code=503)
+
+    @app.get("/api/live")
+    async def live():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        return await asyncio.to_thread(engine.snapshot)
+
+    @app.get("/api/live/device")
+    async def live_device(key: str = ""):
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        data = engine.history(key[:64])
+        return data if data is not None else JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/api/live/scan")
+    async def live_scan():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        engine.request_scan()
+        return {"ok": True}
+
+    @app.post("/api/live/settings")
+    async def live_settings(request: Request):
+        from ..permissions import DENIED, is_viewer
+
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        changes = {k: body[k] for k in ("interface", "ping_interval", "scan_interval", "offline_after") if k in body}
+        result = engine.update_settings(changes)
+        log_event(settings.audit_log_path, user=request.state.who, tool="live_settings", args=changes, ok=True)
+        return result
+
+    @app.get("/api/live/export.csv")
+    async def live_export():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        text = await asyncio.to_thread(engine.export_csv)
+        name = f"live-devices-{datetime.now():%Y%m%d-%H%M%S}.csv"
+        # BOM so Excel opens Georgian text as UTF-8
+        return Response("﻿" + text, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
     # -- push notifications --------------------------------------------------------
     @app.get("/api/push/key")
     async def push_key():

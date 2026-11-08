@@ -11,6 +11,7 @@ from ..health import check_many
 from ..runbooks import FAIL, OK, WARN, RunbookResult
 from ..tools import device as dev
 from ..tools import network as net
+from ..osutil import NO_WINDOW
 
 VPN_CMDS = {
     "ios": ["show crypto isakmp sa", "show crypto ipsec sa | include peer|pkts encaps|pkts decaps", "show interfaces description | include Tu"],
@@ -82,7 +83,7 @@ def _windows_wifi() -> dict | None:
         return None
     try:
         out = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True, text=True, timeout=10,
-                             errors="replace").stdout
+                             errors="replace", creationflags=NO_WINDOW).stdout
     except Exception:  # noqa: BLE001
         return None
     def field(*names):

@@ -50,6 +50,7 @@
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
     <symbol id="i-mute" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 9.6-4.8M18 9c0 6.5 2.5 8.5 2.5 8.5H8M10 21a2.2 2.2 0 0 0 4 0M3.5 3.5l17 17"/></symbol>
     <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5 13.8 9 19.5 10.8 13.8 12.6 12 18.5 10.2 12.6 4.5 10.8 10.2 9z"/></symbol>
+    <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1.8"/><path d="M8.6 8.6a4.8 4.8 0 0 0 0 6.8M15.4 8.6a4.8 4.8 0 0 1 0 6.8M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></symbol>
     <symbol id="i-dollar" viewBox="0 0 24 24"><path d="M12 3v18M16.5 7.5c-.6-1.4-2.3-2.3-4.5-2.3-2.6 0-4.3 1.3-4.3 3.2 0 4.6 9 2.4 9 7 0 2-1.9 3.4-4.7 3.4-2.3 0-4-.9-4.6-2.6"/></symbol>
   </svg>
 
@@ -234,6 +235,42 @@
       <p class="about" id="about"></p>
     </section>
 
+    <section id="view-live" class="view scroll" hidden>
+      <div class="live-bar">
+        <label class="live-field"><span>ინტერფეისი</span><select id="live-iface" aria-label="ქსელის ინტერფეისი"></select></label>
+        <label class="live-field"><span>განახლება</span>
+          <select id="live-interval" aria-label="განახლების ინტერვალი">
+            <option value="2">2 წმ</option><option value="3">3 წმ</option><option value="5">5 წმ</option>
+            <option value="10">10 წმ</option><option value="30">30 წმ</option>
+          </select>
+        </label>
+        <button type="button" id="live-scan" class="live-btn"><svg class="icon"><use href="#i-refresh"/></svg><span>სკანი ახლა</span></button>
+        <a id="live-csv" class="live-btn" href="/api/live/export.csv" download><svg class="icon"><use href="#i-download"/></svg><span>CSV</span></a>
+      </div>
+      <div id="live-summary" class="live-summary" aria-live="polite"></div>
+      <div id="live-notices"></div>
+      <label class="search"><svg class="icon"><use href="#i-search"/></svg>
+        <input id="live-search" type="search" placeholder="ძებნა: IP, MAC, სახელი, მწარმოებელი"></label>
+      <div class="live-wrap">
+        <table class="live-table">
+          <thead><tr>
+            <th class="c-st"><button type="button" data-sort="status" aria-label="სტატუსი">●</button></th>
+            <th><button type="button" data-sort="ip">IP</button></th>
+            <th class="c-mac"><button type="button" data-sort="mac">MAC</button></th>
+            <th class="c-vendor"><button type="button" data-sort="vendor">მწარმოებელი</button></th>
+            <th><button type="button" data-sort="hostname">სახელი</button></th>
+            <th class="c-ms"><button type="button" data-sort="ms">Ping</button></th>
+            <th class="c-seen"><button type="button" data-sort="first">პირველად</button></th>
+            <th class="c-seen"><button type="button" data-sort="last">ბოლოს</button></th>
+          </tr></thead>
+          <tbody id="live-rows"></tbody>
+        </table>
+      </div>
+      <div id="live-detail" class="live-detail" hidden></div>
+      <h2 class="section">მოვლენები</h2>
+      <div id="live-events" class="live-events"></div>
+    </section>
+
     <section id="view-term" class="view" hidden>
       <div class="term-bar">
         <select id="term-dev" aria-label="მოწყობილობა"></select>
@@ -252,6 +289,7 @@
     <nav class="tabbar">
       <button type="button" data-view="chat" class="active"><span class="tab-ico"><svg class="icon"><use href="#i-chat"/></svg></span>ჩატი</button>
       <button type="button" data-view="dash"><span class="tab-ico"><svg class="icon"><use href="#i-network"/></svg><span class="badge" id="tab-badge" hidden></span></span>ქსელი</button>
+      <button type="button" data-view="live"><span class="tab-ico"><svg class="icon"><use href="#i-radar"/></svg></span>Live</button>
       <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span>ტერმინალი</button>
       <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span>პარამეტრები</button>
     </nav>

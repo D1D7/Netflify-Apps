@@ -9,7 +9,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import struct
@@ -138,11 +137,9 @@ class WebAuth:
                     pass  # half-written file: try again on the next request
 
     def _save(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, indent=1), encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.path)
+        from ..osutil import atomic_write
+
+        atomic_write(self.path, json.dumps(self._data, indent=1), private=True)  # password hash, 2FA secret, keys
         self._mtime = self.path.stat().st_mtime
 
     @property

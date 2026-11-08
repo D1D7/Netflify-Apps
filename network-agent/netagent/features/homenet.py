@@ -19,6 +19,7 @@ from pathlib import Path
 from ..newdevices import NewDeviceTracker, canonical_mac
 from ..result import Button, CommandError, Result
 from . import env_int
+from ..osutil import NO_WINDOW
 
 IS_WINDOWS = platform.system() == "Windows"
 PORTS = {
@@ -53,7 +54,7 @@ def default_gateway() -> str | None:
     try:
         if IS_WINDOWS:
             out = subprocess.run(["route", "print", "-4", "0.0.0.0"], capture_output=True, text=True,
-                                 timeout=10, errors="replace").stdout
+                                 timeout=10, errors="replace", creationflags=NO_WINDOW).stdout
             m = re.search(r"^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\d+\.\d+\.\d+\.\d+)", out, re.M)
             return m.group(1) if m else None
         route = Path("/proc/net/route")
@@ -62,7 +63,8 @@ def default_gateway() -> str | None:
                 f = line.split()
                 if len(f) > 2 and f[1] == "00000000":
                     return socket.inet_ntoa(bytes.fromhex(f[2])[::-1])
-        out = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True, timeout=10).stdout
+        out = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True, timeout=10,
+                             creationflags=NO_WINDOW).stdout
         m = re.search(r"gateway:\s*(\S+)", out)
         return m.group(1) if m else None
     except Exception:  # noqa: BLE001
@@ -93,7 +95,8 @@ def read_arp() -> dict[str, str]:
         return parse_arp_table(p.read_text())
     args = ["arp", "-a"] if IS_WINDOWS else ["arp", "-an"]
     try:
-        return parse_arp_table(subprocess.run(args, capture_output=True, text=True, timeout=15, errors="replace").stdout)
+        return parse_arp_table(subprocess.run(args, capture_output=True, text=True, timeout=15, errors="replace",
+                                               creationflags=NO_WINDOW).stdout)
     except Exception:  # noqa: BLE001
         return {}
 

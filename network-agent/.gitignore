@@ -3,7 +3,7 @@ inventory/devices.yaml
 logs/
 backups/
 exports/
-data/
+/data/
 __pycache__/
 *.pyc
 .venv/

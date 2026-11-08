@@ -808,8 +808,10 @@ def on_alert(s, alert) -> None:
 
     if _MONITORING is None or not auto_enabled() or alert.kind == "diagnosis":
         return
+    from ..monitoring import spawn
+
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return
     if alert.kind == "isp" and "აღდგა" in alert.text:
@@ -818,7 +820,7 @@ def on_alert(s, alert) -> None:
             s.state.set(ISP_KEY, None)
             from ..monitoring import Alert
 
-            loop.create_task(_MONITORING.emit(Alert(
+            spawn(_MONITORING.emit(Alert(
                 "diagnosis", f"🩺 **გათიშვის მიზეზი** (გაზომილი {kept['ts'][11:16]}-ზე)\n🎯 {kept['cause']}", [], mutable=False,
                 buttons=[Button("📄 ISP რეპორტი", "/isp report 1")])))
         return
@@ -831,4 +833,4 @@ def on_alert(s, alert) -> None:
         return
     _RUNNING.add(key)
     s.state.update("autodiag_last", lambda v: {**(v or {}), key: time.time()})
-    loop.create_task(_auto(s, key, target, alert))
+    spawn(_auto(s, key, target, alert))

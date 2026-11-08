@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import PROJECT_ROOT, settings
+from .osutil import NO_WINDOW
 
 OK, WARN, FAIL = "ok", "warn", "fail"
 ICON = {OK: "✅", WARN: "⚠️ ", FAIL: "❌"}
@@ -243,7 +244,8 @@ def run_checks(online: bool = True) -> list[Check]:
         add(Check(WARN, "Tailscale არ არის დაყენებული", "ტელეფონიდან წვდომისთვის: tailscale.com/download"))
     else:
         try:
-            out = subprocess.run([ts, "serve", "status"], capture_output=True, text=True, timeout=10, errors="replace")
+            out = subprocess.run([ts, "serve", "status"], capture_output=True, text=True, timeout=10, errors="replace",
+                                 creationflags=NO_WINDOW)
             text = (out.stdout + out.stderr).strip()
             if str(settings.web_port) in text and "https://" in text:
                 url = next((w for w in text.split() if w.startswith("https://")), "")

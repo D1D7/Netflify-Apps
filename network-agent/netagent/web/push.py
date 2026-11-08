@@ -73,10 +73,10 @@ class VapidKeys:
             self.private = serialization.load_pem_private_key(path.read_bytes(), password=None)
         else:
             self.private = ec.generate_private_key(ec.SECP256R1())
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(self.private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                                        serialization.NoEncryption()))
-            os.chmod(path, 0o600)
+            from ..osutil import atomic_write
+
+            atomic_write(path, self.private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                          serialization.NoEncryption()), private=True)
 
     @property
     def public_b64(self) -> str:

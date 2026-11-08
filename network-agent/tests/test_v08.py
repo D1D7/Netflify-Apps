@@ -60,20 +60,32 @@ def test_tracker_baseline_then_new(tmp_path):
     assert "10.0.0.9" in newdevices.format_new(new)
 
 
+def _free_ports(n: int) -> list[int]:
+    """n consecutive free ports BELOW the OS ephemeral range (Windows: 49152+, Linux: 32768+). With an ephemeral
+    port, a connect() to the stopped fake device can get that very port as its own source port and connect to
+    itself (TCP simultaneous open), so "device down" would look reachable."""
+    import random
+
+    for _ in range(200):
+        base = random.randint(20000, 30000)
+        try:
+            for p in range(base, base + n):
+                with socket.socket() as s:
+                    s.bind(("127.0.0.1", p))
+            return list(range(base, base + n))
+        except OSError:
+            continue
+    raise RuntimeError("no free port block")
+
+
 # -- demo lab ------------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def lab():
     pytest.importorskip("paramiko")
     from netagent.demo import lab as lab_mod
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        base = s.getsockname()[1]
     ips = ["127.0.0.1"] * 4
-    ports = [base + i for i in range(4)]
-    for p in ports:  # make sure they are free
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", p))
+    ports = _free_ports(4)
     lb = lab_mod.DemoLab(lab_mod.build_devices(ips, ports), syslog_port=0)
     lb.start()
     lab_mod.LAB = lb

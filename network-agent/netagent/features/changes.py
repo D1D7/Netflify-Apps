@@ -55,8 +55,9 @@ def set_pin(pin: str) -> None:
 
     if not re.fullmatch(r"\d{6,12}", pin):
         raise ValueError("PIN უნდა იყოს 6–12 ციფრი")
-    pin_path().parent.mkdir(parents=True, exist_ok=True)
-    pin_path().write_text(json.dumps(hash_password(pin)), encoding="utf-8")
+    from ..osutil import atomic_write
+
+    atomic_write(pin_path(), json.dumps(hash_password(pin)), private=True)  # was world-readable on every OS
 
 
 def check_pin(state, pin: str) -> None:

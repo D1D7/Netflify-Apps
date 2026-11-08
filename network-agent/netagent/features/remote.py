@@ -13,7 +13,6 @@ Tokens are kept in data/remotes.json (not in the chat history of the other side,
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 from concurrent.futures import ThreadPoolExecutor
@@ -40,12 +39,9 @@ def load() -> dict[str, dict]:
 
 
 def _save(data: dict) -> None:
-    p = _path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, p)
+    from ..osutil import atomic_write
+
+    atomic_write(_path(), json.dumps(data, indent=1), private=True)  # API tokens of other NetAgents
 
 
 def _call(peer: dict, method: str, path: str, body: dict | None = None) -> dict:

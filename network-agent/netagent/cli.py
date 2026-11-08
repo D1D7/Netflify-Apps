@@ -29,6 +29,7 @@ import argparse
 import getpass
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -574,7 +575,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    text = sys.stdin.read() if args.file == "-" else open(args.file, encoding="utf-8", errors="replace").read()
+    text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8", errors="replace")
     result = extract_network_data(mask_secrets(text))
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

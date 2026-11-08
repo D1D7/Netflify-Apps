@@ -53,7 +53,10 @@ def test_sessions_and_rate_limit(tmp_path):
         assert auth.login("nope", "", "9.9.9.9")[0] is None
     token, err = auth.login("a-long-password", "", "9.9.9.9")
     assert token is None and "15 წუთში" in err  # locked out even with the right password
-    assert (tmp_path / "auth.json").stat().st_mode & 0o777 == 0o600
+    # owner-only: mode 0600 on Linux/macOS; on Windows chmod does nothing, so the ACL is checked instead
+    from netagent.osutil import is_private
+
+    assert is_private(tmp_path / "auth.json")
 
 
 def test_env_password_first_login(tmp_path):

@@ -1,13 +1,15 @@
 """MAC address → manufacturer (OUI lookup).
 
 The IEEE registry (official, public) is downloaded once and cached in data/oui.txt;
-Wireshark's 'manuf' list is the fallback source. Without a database, lookups still
-recognise randomized ("private") MACs that phones use.
+Wireshark's 'manuf' list is the fallback source. Until (or without) that download, a copy of
+the IEEE list shipped with NetAgent (netagent/data/oui.txt.gz) is used, so lookups work offline
+from the first start. Randomized ("private") MACs that phones use are recognised too.
 """
 
 from __future__ import annotations
 
 import csv
+import gzip
 import io
 import logging
 import re
@@ -21,6 +23,7 @@ SOURCES = [
     ("wireshark", "https://www.wireshark.org/download/automated/data/manuf"),
 ]
 RANDOM_LABEL = "შემთხვევითი MAC (ტელეფონის/ლეპტოპის privacy რეჟიმი)"
+BUNDLED = Path(__file__).parent / "data" / "oui.txt.gz"  # offline copy of the IEEE list
 
 
 def normalize(mac: str) -> str:
@@ -86,11 +89,18 @@ class VendorDB:
             with self._lock:
                 if self._db is None:
                     db: dict[str, str] = {}
+                    text = ""
                     if self.cache.exists():
-                        for line in self.cache.read_text(encoding="utf-8", errors="replace").splitlines():
-                            k, _, v = line.partition("\t")
-                            if k and v:
-                                db[k] = v
+                        text = self.cache.read_text(encoding="utf-8", errors="replace")
+                    elif BUNDLED.exists():  # no download yet (or offline): the copy shipped with NetAgent
+                        try:
+                            text = gzip.decompress(BUNDLED.read_bytes()).decode("utf-8", errors="replace")
+                        except (OSError, EOFError) as exc:
+                            log.warning("bundled OUI list unreadable: %s", exc)
+                    for line in text.splitlines():
+                        k, _, v = line.partition("\t")
+                        if k and v:
+                            db[k] = v
                     self._db = db
         return self._db
 

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..config import settings
 from ..result import Button, CommandError, Result
+from ..osutil import NO_WINDOW
 
 log = logging.getLogger("netagent.gitbackup")
 _LOCK = threading.Lock()  # backups run in parallel threads; git allows one writer at a time
@@ -28,7 +29,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "GIT_AUTHOR_NAME": "NetAgent", "GIT_AUTHOR_EMAIL": "netagent@localhost",
            "GIT_COMMITTER_NAME": "NetAgent", "GIT_COMMITTER_EMAIL": "netagent@localhost"}
     return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=60,
-                          errors="replace", env=env)
+                          errors="replace", env=env, creationflags=NO_WINDOW)
 
 
 def ensure_repo(root: Path) -> bool:

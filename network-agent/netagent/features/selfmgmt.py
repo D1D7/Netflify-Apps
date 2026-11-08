@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ..config import PROJECT_ROOT, settings
 from ..result import Button, CommandError, Result
+from ..osutil import NO_WINDOW
 
 log = logging.getLogger("netagent.selfmgmt")
 RESTART_CODE = 75
@@ -25,7 +26,7 @@ SERVER_RUNNING = False  # set by server.amain; restart only makes sense for the 
 
 def git(*args: str, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(PROJECT_ROOT), *args], capture_output=True, text=True,
-                          timeout=timeout, errors="replace")
+                          timeout=timeout, errors="replace", creationflags=NO_WINDOW)
 
 
 def in_git() -> bool:
@@ -90,7 +91,8 @@ def update_cmd(s, args, user) -> Result:
     notes = []
     if any(c.endswith("requirements.txt") for c in changed):
         pip = subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", str(PROJECT_ROOT / "requirements.txt")],
-                             capture_output=True, text=True, timeout=900, errors="replace")
+                             capture_output=True, text=True, timeout=900, errors="replace",
+                             creationflags=NO_WINDOW)
         notes.append("📦 ბიბლიოთეკები განახლდა" if pip.returncode == 0 else "⚠️ pip install ვერ შესრულდა — გაუშვი install.bat")
     log_event_text = f"✅ განახლდა: {old[:7]} → {new[:7]} ({len(changed)} ფაილი)"
     if SERVER_RUNNING:

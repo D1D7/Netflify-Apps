@@ -10,6 +10,7 @@ import socket
 import subprocess
 import time
 from typing import Any
+from ..osutil import NO_WINDOW
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -31,7 +32,7 @@ def _valid_host(host: str) -> str:
 def _run(cmd: list[str], timeout: int) -> dict[str, Any]:
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, errors="replace"
+            cmd, capture_output=True, text=True, timeout=timeout, errors="replace", creationflags=NO_WINDOW
         )
     except FileNotFoundError:
         return {"error": f"'{cmd[0]}' ამ სერვერზე დაყენებული არ არის"}
