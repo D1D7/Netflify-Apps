@@ -51,7 +51,9 @@ const EN = {
   "✅ ყველა მოწყობილობა ხელმისაწვდომია": "✅ All devices are reachable", "ვერაფერი მოიძებნა": "Nothing found",
   "მიუწვდომელი · timeout": "Unreachable · timeout", "მიუწვდომელი": "Unreachable", "მოწყობილობები ჯერ არ არის": "No devices yet",
   "ყველაფერი რიგზეა": "All good", "გათიშ.": "Down", "24 სთ": "24 h", "ახლა": "Now", "მიგნება 24 სთ": "Findings 24 h",
-  "ალერტები": "Alerts", "მოვლენები ჯერ არ ყოფილა.": "No events yet.", "სიჩქარე: /speedtest": "Speed: /speedtest",
+  "ალერტები": "Alerts", "მართვადი მოწყობილობები ჯერ არ არის.": "No managed devices yet.",
+  "როცა როუტერს ან switch-ს ქსელში შეაერთებ, თავისით ამოვიცნობ და აქ გამოჩნდება.":
+    "Plug a router or switch into the network and it will be detected and shown here.", "მოვლენები ჯერ არ ყოფილა.": "No events yet.", "სიჩქარე: /speedtest": "Speed: /speedtest",
   "🔴 არ არის": "🔴 Down", "კაბელები განახლდა": "Cables rediscovered",
   "რუკისთვის საჭიროა მართვადი როუტერები/switch-ები devices.yaml-ში (კაბელებს CDP/LLDP-ით ვპოულობ).":
     "The map needs managed routers/switches in devices.yaml (cables are found with CDP/LLDP).",

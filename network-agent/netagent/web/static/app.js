@@ -595,7 +595,7 @@ function renderDevices() {
   box.replaceChildren();
   if (!data) return;
   if (!data.devices.length) {
-    box.appendChild(el("div", "empty-note", "მოწყობილობები ჯერ არ არის.<br>ჩატში დაწერე: <code>/discover 10.0.0.0/24</code>"));
+    box.appendChild(el("div", "empty-note", "<span>მართვადი მოწყობილობები ჯერ არ არის.</span><br><span>როცა როუტერს ან switch-ს ქსელში შეაერთებ, თავისით ამოვიცნობ და აქ გამოჩნდება.</span>"));
     return;
   }
   const q = state.devSearch.toLowerCase();
