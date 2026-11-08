@@ -1,4 +1,5 @@
 // NetAgent app (vanilla JS, no build step)
+import { setLang, startI18n } from "./i18n.js";
 const $ = (sel) => document.querySelector(sel);
 const STORE_KEY = "na.chat.v1";
 const THEME_KEY = "na.theme";
@@ -510,6 +511,12 @@ const QUICK = [
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
   ["lock", "red", "დაცვა", "/security"],
+  ["radar", "blue", "Wi-Fi არხები", "/wifiscan"],
+  ["pulse", "amber", "Bufferbloat", "/bufferbloat"],
+  ["network", "violet", "სერვისები", "/services"],
+  ["shield", "green", "DNS ბლოკი", "/dns"],
+  ["sparkle", "amber", "დილის შეჯამება", "/morning"],
+  ["server", "gray", "Home Assistant", "/mqtt"],
   ["help", "amber", "Runbook", "/runbook"],
   ["save", "green", "Backup", "/backup"],
   ["server", "blue", "Inventory", "/devices"],
@@ -1506,6 +1513,8 @@ function showApp() {
 
 async function init() {
   loadTheme();
+  startI18n();
+  document.querySelectorAll("#lang button").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
   load();
   renderQuick();
   setupVoice();

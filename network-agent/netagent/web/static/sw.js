@@ -1,9 +1,10 @@
 // NetAgent service worker: app shell cache + push notifications.
-const CACHE = "netagent-shell-v18";
+const CACHE = "netagent-shell-v19";
 const SHELL = [
   "/",
   "/static/app.css",
   "/static/app.js",
+  "/static/i18n.js",
   "/manifest.webmanifest",
   "/static/icon-192.png",
   "/static/icon-512.png",
