@@ -470,6 +470,27 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True, "entry": entry}
 
+    # -- this PC's hardware health (disks, RAM) -------------------------------------------------------
+    _hw_cache: dict = {}
+
+    @app.get("/api/hw")
+    async def hw(refresh: int = 0):
+        import time as _time
+
+        from ..features import hwhealth
+
+        if refresh or not _hw_cache or _time.monotonic() - _hw_cache["at"] > 60:
+            try:
+                data = await asyncio.to_thread(hwhealth.collect)
+            except Exception as exc:  # noqa: BLE001 - show why instead of a 500
+                log.info("hw health: %s", exc)
+                return JSONResponse({"error": f"ვერ წავიკითხე: {type(exc).__name__}"}, status_code=503)
+            hist = await asyncio.to_thread(hwhealth.remember, services.state, data)
+            for d in data["disks"]:
+                d["forecast"] = hwhealth.forecast(hist, f"{d.get('name')}#{d.get('id')}")
+            _hw_cache.update(at=_time.monotonic(), data=data)
+        return _hw_cache["data"]
+
     # -- Wi-Fi dead zones (grid map + walk spots) --------------------------------------------------
     @app.get("/api/wifimap")
     async def wifimap_get():

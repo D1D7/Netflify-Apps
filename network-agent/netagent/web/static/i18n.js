@@ -51,7 +51,16 @@ const EN = {
   "✅ ყველა მოწყობილობა ხელმისაწვდომია": "✅ All devices are reachable", "ვერაფერი მოიძებნა": "Nothing found",
   "მიუწვდომელი · timeout": "Unreachable · timeout", "მიუწვდომელი": "Unreachable", "მოწყობილობები ჯერ არ არის": "No devices yet",
   "ყველაფერი რიგზეა": "All good", "გათიშ.": "Down", "24 სთ": "24 h", "ახლა": "Now", "მიგნება 24 სთ": "Findings 24 h",
-  "ალერტები": "Alerts", "Wi-Fi მკვდარი ზონები": "Wi-Fi dead zones", "სიარული": "Walk", "ბადე:": "Grid:",
+  "ალერტები": "Alerts", "ტერმ.": "Term.", "პარამ.": "Settings", "კომპიუტერი": "Computer", "დისკები და RAM": "Disks and RAM", "დისკები": "Disks",
+  "ოპერატიული მეხსიერება (RAM)": "Memory (RAM)", "ჯანმრთელი": "Healthy", "ყურადღება": "Attention", "პრობლემა": "Problem",
+  "ყველაფერი ჯანმრთელია": "Everything is healthy", "ყურადღება სჭირდება": "Needs attention", "პრობლემაა": "There is a problem",
+  "სიცოცხლე": "Life", "სტატუსი": "Status", "ტემპერატურა": "Temperature", "ჩართული": "Powered on", "ჩაწერილი": "Written",
+  "სათადარიგო ბლოკები": "Spare blocks", "შეცდომები": "Errors", "უეცარი გათიშვა": "Unsafe shutdowns", "დარჩა (პროგნოზი)": "Left (forecast)",
+  "✅ აპარატურული შეცდომა ბოლო 30 დღეში არ ყოფილა": "✅ No hardware errors in the last 30 days",
+  "დეტალური SMART ამ დისკზე Windows-მა ადმინის გარეშე არ მოგვცა — ჩანს Windows-ის სტატუსი.":
+    "Windows does not give this disk's detailed SMART without admin: showing Windows' own status.",
+  "SSD-ის „სიცოცხლე“ = მწარმოებლის მიერ შეფასებული რესურსიდან დარჩენილი ნაწილი (SMART). RAM-ს ცვეთა არ აქვს — მისი ჯანმრთელობა ნიშნავს, რომ შეცდომები არ ჩანს.":
+    "SSD \"life\" = what is left of the maker's rated endurance (SMART). RAM does not wear out: healthy means no errors are seen.", "Wi-Fi მკვდარი ზონები": "Wi-Fi dead zones", "სიარული": "Walk", "ბადე:": "Grid:",
   "გასუფთავება": "Clear", "კარგი": "Good", "ნორმა": "OK", "სუსტი": "Weak", "მკვდარი": "Dead", "არ გაზომილა": "Not measured",
   "ხარისხი": "Quality", "დაწყება": "Start", "გაჩერება": "Stop", "მონიშნე ეს ადგილი": "Mark this spot",
   "დააჭირე „დაწყებას“": "Press Start", "სვეტები": "Columns", "რიგები": "Rows", "რა ეშველება? → /deadzones": "How to fix? → /deadzones",
@@ -149,6 +158,10 @@ const PATTERNS = [
   [/^ping (.+) ms · დანაკარგი (.+)%$/, "ping $1 ms · loss $2%"], [/^☠️ მკვდარი: (.+)$/, "☠️ Dead: $1"],
   [/^🟠 სუსტი: (.+)$/, "🟠 Weak: $1"], [/^📍 მონიშნული ცუდი ადგილები: (.+)$/, "📍 Marked bad spots: $1"],
   [/^(.+): ☠️ მკვდარი ზონა$/, "$1: ☠️ dead zone"],
+  [/^(.+) GB თავისუფალი (.+)-დან$/, "$1 GB free of $2"], [/^ახლა გამოყენებულია (.+) GB \((\d+)%\)$/, "In use now: $1 GB ($2%)"],
+  [/^(\d+) დისკი · RAM (.+) GB · (.+)$/, "$1 disk(s) · RAM $2 GB · $3"], [/^(.+) სთ$/, "$1 h"], [/^~(.+) წელი$/, "~$1 years"],
+  [/^აპარატურული შეცდომები 30 დღეში: (\d+)$/, "Hardware errors in 30 days: $1"],
+  [/^⏳ ცვეთის პროგნოზი (\d+) დღეში გამოჩნდება \(საჭიროა ერთი კვირის მონაცემი\)\.$/, "⏳ The wear forecast appears in $1 day(s) (needs a week of data)."],
   [/^(\d+) წმ$/, "$1 s"], [/^(\d+) წთ$/, "$1 min"], [/^(\d+) სთ$/, "$1 h"],
 ];
 
@@ -169,7 +182,7 @@ export function t(text) {
   return s;
 }
 
-const ATTRS = ["placeholder", "title", "aria-label"];
+const ATTRS = ["placeholder", "title", "aria-label", "data-s"];
 
 function fixAttrs(el) {
   for (const a of ATTRS) {

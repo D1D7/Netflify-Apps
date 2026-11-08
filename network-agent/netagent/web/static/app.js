@@ -34,6 +34,7 @@ const VIEW_TITLES = {
   settings: ["პარამეტრები", "აპი და ანგარიში"],
   term: ["ტერმინალი", "read-only ბრძანებები მოწყობილობებზე"],
   live: ["Live Devices", "ვინ არის ქსელში ახლა"],
+  hw: ["კომპიუტერი", "დისკები და RAM"],
 };
 
 // ---------------------------------------------------------------- small helpers
@@ -1047,6 +1048,102 @@ async function dzMark() {
   } catch (err) { toast(err.message); }
 }
 
+// ---------------------------------------------------------------- this PC: disks and RAM
+
+const HW_WORD = { ok: "ჯანმრთელი", warn: "ყურადღება", bad: "პრობლემა" };
+
+function hwRing(pct, status) {
+  const v = pct == null ? 100 : pct;
+  return `<svg class="hw-ring s-${status}" viewBox="0 0 120 120" aria-hidden="true"><circle class="t" cx="60" cy="60" r="50"/>
+    <circle class="v" cx="60" cy="60" r="50" pathLength="100" style="stroke-dasharray:0 100" data-v="${v}"/></svg>`;
+}
+
+function hwFact(label, value) {
+  return value == null || value === "" ? "" : `<div class="hw-fact"><span>${esc(label)}</span><b>${esc(String(value))}</b></div>`;
+}
+
+function renderHw(d) {
+  const all = [...d.disks.map((x) => x.status), d.ram.status];
+  const worst = all.includes("bad") ? "bad" : all.includes("warn") ? "warn" : "ok";
+  $("#hw-overall").className = `hw-overall s-${worst}`;
+  $("#hw-overall").innerHTML = `<span class="hw-dot"></span><div><b>${worst === "ok" ? "ყველაფერი ჯანმრთელია" : worst === "warn" ? "ყურადღება სჭირდება" : "პრობლემაა"}</b>
+    <small>${d.disks.length} დისკი · RAM ${d.ram.total_gb} GB · ${new Date(d.ts).toLocaleTimeString("ka-GE", { hour: "2-digit", minute: "2-digit" })}</small></div>`;
+
+  const disks = $("#hw-disks");
+  disks.replaceChildren();
+  for (const x of d.disks) {
+    const s = x.details || {};
+    const card = el("div", `hw-card s-${x.status}`);
+    const life = x.life_pct;
+    card.innerHTML = `<div class="hw-top">
+        <div class="hw-gauge">${hwRing(life, x.status)}<div class="hw-gv"><b>${life == null ? (x.status === "ok" ? "OK" : "!") : `${life}%`}</b><small>${life == null ? "სტატუსი" : "სიცოცხლე"}</small></div></div>
+        <div class="hw-main"><div class="hw-name"></div><div class="hw-kind"></div>
+          <span class="hw-badge s-${x.status}">${HW_WORD[x.status]}</span></div>
+      </div>
+      <div class="hw-facts">${hwFact("ტემპერატურა", s.temperature_c != null ? `${s.temperature_c}°C` : null)}
+        ${hwFact("ჩართული", s.power_on_hours != null ? `${s.power_on_hours.toLocaleString()} სთ` : null)}
+        ${hwFact("ჩაწერილი", s.written_tb != null ? `${s.written_tb} TB` : null)}
+        ${hwFact("სათადარიგო ბლოკები", s.spare_pct != null ? `${s.spare_pct}%` : null)}
+        ${hwFact("შეცდომები", s.media_errors ?? s.reallocated_sectors ?? null)}
+        ${hwFact("უეცარი გათიშვა", s.unsafe_shutdowns || null)}
+        ${hwFact("დარჩა (პროგნოზი)", x.forecast?.years_left != null ? `~${x.forecast.years_left} წელი` : null)}</div>
+      <div class="hw-why"></div><div class="hw-vols"></div>`;
+    card.querySelector(".hw-name").textContent = x.name;
+    card.querySelector(".hw-kind").textContent = `${x.kind} · ${x.size_gb} GB`;
+    const why = card.querySelector(".hw-why");
+    for (const w of x.why) why.appendChild(Object.assign(el("div", "hw-warn"), { textContent: `⚠️ ${w}` }));
+    if (!Object.keys(s).length) why.appendChild(Object.assign(el("div", "hw-info"), { textContent: "დეტალური SMART ამ დისკზე Windows-მა ადმინის გარეშე არ მოგვცა — ჩანს Windows-ის სტატუსი." }));
+    if (x.forecast?.wait_days) why.appendChild(Object.assign(el("div", "hw-info"), { textContent: `⏳ ცვეთის პროგნოზი ${x.forecast.wait_days} დღეში გამოჩნდება (საჭიროა ერთი კვირის მონაცემი).` }));
+    const vols = card.querySelector(".hw-vols");
+    for (const v of x.volumes) {
+      const row = el("div", "hw-vol", `<div class="hw-vol-top"><b></b><span></span></div><div class="hw-bar"><span></span></div>`);
+      row.querySelector("b").textContent = `${v.letter}:${v.label ? ` ${v.label}` : ""}`;
+      row.querySelector(".hw-vol-top span").textContent = `${v.free_gb} GB თავისუფალი ${v.size_gb}-დან`;
+      row.classList.toggle("full", (v.used_pct || 0) >= 90);
+      vols.appendChild(row);
+      setTimeout(() => { row.querySelector(".hw-bar span").style.width = `${v.used_pct || 0}%`; }, 60);
+    }
+    disks.appendChild(card);
+  }
+
+  const r = d.ram;
+  const ram = $("#hw-ram");
+  ram.replaceChildren();
+  const card = el("div", `hw-card s-${r.status}`);
+  card.innerHTML = `<div class="hw-top">
+      <div class="hw-gauge">${hwRing(r.status === "ok" ? 100 : r.status === "warn" ? 60 : 25, r.status)}<div class="hw-gv"><b>${r.status === "ok" ? "OK" : "!"}</b><small>შეცდომები</small></div></div>
+      <div class="hw-main"><div class="hw-name">${r.total_gb} GB RAM</div><div class="hw-kind">ახლა გამოყენებულია ${r.used_gb} GB (${Math.round(r.percent)}%)</div>
+        <span class="hw-badge s-${r.status}">${HW_WORD[r.status]}</span></div>
+    </div>
+    <div class="hw-vol ${r.percent >= 90 ? "full" : ""}"><div class="hw-bar"><span></span></div></div>
+    <div class="hw-mods"></div><div class="hw-why"></div>`;
+  for (const m of r.modules) {
+    const row = el("div", "hw-mod");
+    row.textContent = `${m.slot}: ${m.size_gb} GB ${m.type}${m.speed ? `-${m.speed}` : ""} · ${m.maker || "?"} ${m.part}`;
+    card.querySelector(".hw-mods").appendChild(row);
+  }
+  for (const w of r.why) card.querySelector(".hw-why").appendChild(Object.assign(el("div", "hw-warn"), { textContent: `⚠️ ${w}` }));
+  card.querySelector(".hw-why").appendChild(Object.assign(el("div", "hw-info"), {
+    textContent: r.whea_30d ? `აპარატურული შეცდომები 30 დღეში: ${r.whea_30d}` : "✅ აპარატურული შეცდომა ბოლო 30 დღეში არ ყოფილა",
+  }));
+  ram.appendChild(card);
+  setTimeout(() => { card.querySelector(".hw-bar span").style.width = `${r.percent}%`; }, 60);
+  // the rings fill up
+  setTimeout(() => document.querySelectorAll("#view-hw .hw-ring .v").forEach((c) => { c.style.strokeDasharray = `${c.dataset.v} 100`; }), 80);
+}
+
+async function loadHw(refresh = false) {
+  const btn = $("#hw-refresh");
+  btn.classList.add("spinning");
+  try {
+    renderHw(await apiJson(`/api/hw${refresh ? "?refresh=1" : ""}`));
+  } catch (err) {
+    if (err.message !== "unauthorized") $("#hw-disks").replaceChildren(Object.assign(el("div", "empty-note"), { textContent: `⚠️ ${err.message}` }));
+  } finally {
+    btn.classList.remove("spinning");
+  }
+}
+
 async function loadOverview() {
   const btn = $("#dash-refresh");
   btn.classList.add("spinning");
@@ -1522,7 +1619,7 @@ function applyLayout() {
   app.classList.toggle("two-pane", two);
   app.dataset.view = state.view;
   const sidePane = two && state.view === "chat";
-  for (const v of ["chat", "dash", "settings", "term", "live"]) {
+  for (const v of ["chat", "dash", "settings", "term", "live", "hw"]) {
     const node = $(`#view-${v}`);
     const show = v === state.view || (sidePane && v === "dash");
     if (show && node.hidden) replay(node, "view-in", 800);
@@ -1549,6 +1646,7 @@ function switchView(name) {
   }
   if (name === "chat") scrollDown();
   if (name === "term") openTerminal();
+  if (name === "hw") loadHw();
   if (name === "live") startLive();
   else stopLive();
 }
@@ -1967,6 +2065,7 @@ async function init() {
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
+  $("#hw-refresh").addEventListener("click", () => loadHw(true));
   document.querySelectorAll("#dz-mode button").forEach((b) => b.addEventListener("click", () => {
     document.querySelectorAll("#dz-mode button").forEach((x) => x.classList.toggle("on", x === b));
     $("#dz-grid-pane").hidden = b.dataset.mode !== "grid";

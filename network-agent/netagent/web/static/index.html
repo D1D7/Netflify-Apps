@@ -350,6 +350,18 @@
       <div id="live-events" class="live-events"></div>
     </section>
 
+    <section id="view-hw" class="view scroll" hidden>
+      <div class="hw-head">
+        <div class="hw-overall" id="hw-overall">…</div>
+        <button id="hw-refresh" class="round-btn hw-refresh" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
+      </div>
+      <h2 class="section">დისკები</h2>
+      <div id="hw-disks" class="hw-list"><div class="skeleton"></div></div>
+      <h2 class="section">ოპერატიული მეხსიერება (RAM)</h2>
+      <div id="hw-ram" class="hw-list"><div class="skeleton"></div></div>
+      <p class="hw-note">SSD-ის „სიცოცხლე“ = მწარმოებლის მიერ შეფასებული რესურსიდან დარჩენილი ნაწილი (SMART). RAM-ს ცვეთა არ აქვს — მისი ჯანმრთელობა ნიშნავს, რომ შეცდომები არ ჩანს.</p>
+    </section>
+
     <section id="view-term" class="view" hidden>
       <div class="term-bar">
         <select id="term-dev" aria-label="მოწყობილობა"></select>
@@ -369,8 +381,9 @@
       <button type="button" data-view="chat" class="active"><span class="tab-ico"><svg class="icon"><use href="#i-chat"/></svg></span>ჩატი</button>
       <button type="button" data-view="dash"><span class="tab-ico"><svg class="icon"><use href="#i-network"/></svg><span class="badge" id="tab-badge" hidden></span></span>ქსელი</button>
       <button type="button" data-view="live"><span class="tab-ico"><svg class="icon"><use href="#i-radar"/></svg></span>Live</button>
-      <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span>ტერმინალი</button>
-      <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span>პარამეტრები</button>
+      <button type="button" data-view="hw"><span class="tab-ico"><svg class="icon"><use href="#i-hdd"/></svg></span>PC</button>
+      <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span><span class="tl" data-s="ტერმ.">ტერმინალი</span></button>
+      <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span><span class="tl" data-s="პარამ.">პარამეტრები</span></button>
     </nav>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </div>

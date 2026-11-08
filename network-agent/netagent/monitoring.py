@@ -36,7 +36,7 @@ class Alert:
                 "isp": "🌐 ინტერნეტი", "site": "🌐 საიტი / სერვისი", "escalation": "⏰ შეხსენება",
                 "scheduled": "🗓 განრიგი", "security": "🔐 უსაფრთხოება",
                 "presence": "🏠 ვინ არის სახლში", "diagnosis": "🩺 ავტოდიაგნოსტიკა",
-                "morning": "☀️ დილის შეჯამება"}.get(self.kind, "NetAgent")
+                "morning": "☀️ დილის შეჯამება", "hardware": "🖥 კომპიუტერის აპარატურა"}.get(self.kind, "NetAgent")
 
 
 Notifier = Callable[[Alert], Awaitable[None]]
