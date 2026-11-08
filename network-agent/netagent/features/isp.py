@@ -201,8 +201,9 @@ def format_summary(r: dict) -> str:
                      + f" · packet loss {r['loss_avg_percent']}%")
     if r.get("down_avg_mbps") is not None:
         last = r["speedtests"][-1]
-        lines.append(f"სიჩქარე: ⬇️ {r['down_avg_mbps']} / ⬆️ {r['up_avg_mbps']} Mbit/s (საშუალო), "
-                     f"ბოლო: ⬇️ {last['down_mbps']} ⬆️ {last['up_mbps']}" + (f" · {last['isp']}" if last.get("isp") else ""))
+        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} · ატვირთვა {r['up_avg_mbps']} Mbit/s")
+        lines.append(f"ბოლო ტესტი: ჩამოტვირთვა {last['down_mbps']} · ატვირთვა {last['up_mbps']} Mbit/s"
+                     + (f" · {last['isp']}" if last.get("isp") else ""))
     for o in r["outages"][-8:]:
         lines.append(f"• {o['start'][5:16].replace('T', ' ')} → {o['end'][11:16]} ({_fmt_dur(o['seconds'])})")
     return "\n".join(lines)
@@ -264,8 +265,13 @@ def speedtest_cmd(s, args, user) -> Result:
         t = monitor_for(s).speedtest()
     except Exception as exc:  # noqa: BLE001
         raise CommandError(f"სიჩქარის ტესტი ვერ შესრულდა ({type(exc).__name__}: {exc})") from None
-    return Result(f"⚡ **სიჩქარე:** ⬇️ {t['down_mbps']} Mbit/s · ⬆️ {t['up_mbps']} Mbit/s · ping {t['ping_ms']} ms"
-                  + (f"\n{t['isp']}" + (f", {t['city']}" if t.get("city") else "") if t.get("isp") else ""))
+    lines = ["⚡ **ინტერნეტის სიჩქარე**",
+             f"ჩამოტვირთვა (download): **{t['down_mbps']}** Mbit/s",
+             f"ატვირთვა (upload): **{t['up_mbps']}** Mbit/s",
+             f"დაყოვნება (ping): {t['ping_ms']} ms"]
+    if t.get("isp"):
+        lines.append(f"პროვაიდერი: {t['isp']}" + (f", {t['city']}" if t.get("city") else ""))
+    return Result("\n".join(lines))
 
 
 COMMANDS = {"isp": isp_cmd, "speedtest": speedtest_cmd}
@@ -312,7 +318,7 @@ def jobs(monitoring):
             t = await asyncio.to_thread(m.speedtest)
             low = env_int("NETAGENT_ISP_PLAN_MBPS", 0)
             if low and t["down_mbps"] < low * 0.5:
-                await monitoring.emit(Alert("isp", f"🐢 **ინტერნეტი ნელია:** ⬇️ {t['down_mbps']} Mbit/s "
+                await monitoring.emit(Alert("isp", f"🐢 **ინტერნეტი ნელია:** ჩამოტვირთვა {t['down_mbps']} Mbit/s "
                                                    f"(ტარიფი {low}, ანუ {round(100 * t['down_mbps'] / low)}%)", mutable=False))
         out.append(("speedtest", hours * 3600, 600, speed))
     return out

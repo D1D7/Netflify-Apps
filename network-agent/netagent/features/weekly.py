@@ -74,7 +74,7 @@ def summary_text(r: dict) -> str:
     i = r["isp"]
     if i.get("uptime_percent") is not None:
         lines.append(f"ინტერნეტი: {i['uptime_percent']}% · გათიშვები {len(i['outages'])}"
-                     + (f" · ⬇ {i['down_avg_mbps']} Mbit/s" if i.get("down_avg_mbps") else ""))
+                     + (f" · ჩამოტვირთვა {i['down_avg_mbps']} Mbit/s" if i.get("down_avg_mbps") else ""))
     return "\n".join(lines)
 
 

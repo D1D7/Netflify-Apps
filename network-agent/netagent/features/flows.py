@@ -288,7 +288,7 @@ def format_top(t: dict) -> str:
     lines = [f"📊 **ტრაფიკი — ბოლო {t['minutes']} წთ** (სულ {human(t['total_bytes'])})", "", "**ვინ:**"]
     for h in t["hosts"]:
         label = f" ({h['name']})" if h["name"] else ""
-        lines.append(f"• **{h['ip']}**{label} — ⬇ {human(h['down'])} ⬆ {human(h['up'])}"
+        lines.append(f"• **{h['ip']}**{label} — ჩამოტვირთა {human(h['down'])} · ატვირთა {human(h['up'])}"
                      + (f" · LAN {human(h['lan'])}" if h["lan"] else "") + f" · ~{h['avg_mbps']} Mbit/s")
     if t["remotes"]:
         lines += ["", "**სად:**"] + [f"• {r['name'] or r['ip']} ({r['ip']}) — {human(r['bytes'])}" for r in t["remotes"][:6]]

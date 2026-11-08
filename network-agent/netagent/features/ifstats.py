@@ -240,7 +240,7 @@ def format_traffic(name: str, sample: dict, only_errors: bool = False) -> str:
         if only_errors and not errs and not i.get("crc"):
             continue
         u = utilization(i)
-        rows.append(f"{ifname[:22]:<22} ⬇{human_bps(i.get('in_bps')):>12} ⬆{human_bps(i.get('out_bps')):>12}"
+        rows.append(f"{ifname[:22]:<22} in{human_bps(i.get('in_bps')):>12} out{human_bps(i.get('out_bps')):>12}"
                     + (f" {u:>5}%" if u is not None else "       ")
                     + (f"  err {errs} crc {i.get('crc', 0)}" if errs or i.get("crc") else ""))
     head = f"📶 **{name}** — " + ("ინტერფეისები შეცდომებით" if only_errors else "ტრაფიკი") + \

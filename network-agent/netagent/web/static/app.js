@@ -688,7 +688,7 @@ function renderIsp(isp) {
     d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`;
     pen = true;
   });
-  const speed = isp.last_speed ? `⬇ ${isp.last_speed.down_mbps} ⬆ ${isp.last_speed.up_mbps} Mbit/s` : "სიჩქარე: /speedtest";
+  const speed = isp.last_speed ? `ჩამოტვირთვა ${isp.last_speed.down_mbps} · ატვირთვა ${isp.last_speed.up_mbps} Mbit/s` : "სიჩქარე: /speedtest";
   card.innerHTML = `<div class="isp-title">${icon("network")}<span>ინტერნეტი</span></div>
     <div class="isp-big"></div><svg class="isp-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${gaps}<path d="${d}"/></svg>
     <div class="isp-sub"></div>`;
