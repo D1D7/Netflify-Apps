@@ -21,8 +21,15 @@ from ..result import Button, CommandError, Result
 from . import env_int
 
 TARGETS = [("1.1.1.1", 443), ("8.8.8.8", 443), ("9.9.9.9", 443)]
-DOWN_BYTES = 25_000_000
-UP_BYTES = 8_000_000
+SPEED_URL = "https://speed.cloudflare.com"
+# /meta answers 403 unless the request looks like it comes from Cloudflare's own speed page
+SPEED_HEADERS = {"User-Agent": "NetAgent", "Referer": f"{SPEED_URL}/", "Origin": SPEED_URL}
+PING_SAMPLES = 8
+DOWN_MAX_BYTES = 50_000_000
+DOWN_SECONDS = 8.0      # stop downloading after this long (counted from the first byte)
+UP_PROBE_BYTES = 1_000_000
+UP_TARGET_SECONDS = 5.0  # pick an upload size that takes about this long
+UP_MAX_BYTES = 25_000_000
 FAILS_FOR_OUTAGE = 2
 
 
@@ -43,6 +50,80 @@ def probe(timeout: float = 2.0) -> dict:
             pass
     loss = round(100 * (len(TARGETS) - len(lat)) / len(TARGETS))
     return {"online": bool(lat), "latency_ms": round(min(lat), 1) if lat else None, "loss": loss}
+
+
+
+def _server_ms(headers) -> float:
+    """Cloudflare's own processing time (Server-Timing: cfRequestDuration;dur=1.2), not part of the network delay."""
+    for part in (headers.get("server-timing") or "").split(","):
+        if "dur=" in part:
+            try:
+                return float(part.split("dur=", 1)[1].split(";", 1)[0])
+            except ValueError:
+                return 0.0
+    return 0.0
+
+
+def tcp_rtt_sampler(host: str = "speed.cloudflare.com", port: int = 443, timeout: float = 3.0):
+    """Round-trip time as TCP connect time (SYN -> SYN/ACK). Timing tiny HTTP requests instead adds Windows'
+    ~200 ms delayed-ACK stalls that are not on the network, so a "ping" of 250 ms could really be 5 ms."""
+    try:
+        ip = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+    except OSError:
+        return lambda: None
+
+    def sample() -> float | None:
+        t0 = time.monotonic()
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return (time.monotonic() - t0) * 1000
+        except OSError:
+            return None
+
+    return sample
+
+
+def measure_speed(c, clock=time.monotonic, rtt=None) -> dict:
+    """Latency, download and upload against speed.cloudflare.com with an httpx-like client `c`."""
+    info = {"isp": "", "ip": "", "city": ""}
+    try:
+        meta = c.get(f"{SPEED_URL}/meta", timeout=10).json()
+        info = {"isp": meta.get("asOrganization", ""), "ip": meta.get("clientIp", ""), "city": meta.get("city", "")}
+    except Exception:  # noqa: BLE001 - the provider name is a bonus
+        pass
+
+    # latency: several TCP handshakes; the median ignores single Wi-Fi hiccups, jitter shows how much it jumps
+    sample = rtt or tcp_rtt_sampler()
+    lat = [x for x in (sample() for _ in range(PING_SAMPLES)) if x is not None]
+    ping = statistics.median(lat) if lat else None
+    jitter = statistics.mean(abs(a - b) for a, b in zip(lat, lat[1:])) if len(lat) > 1 else 0.0
+
+    # download: count from the first byte (the request delay is latency, not bandwidth); stop after DOWN_SECONDS
+    size, first, last = 0, None, None
+    with c.stream("GET", f"{SPEED_URL}/__down?bytes={DOWN_MAX_BYTES}") as r:
+        for chunk in r.iter_bytes():
+            now = clock()
+            if first is None:  # the clock starts at the first chunk, so its bytes are not counted either
+                first = last = now
+                continue
+            size += len(chunk)
+            last = now
+            if now - first >= DOWN_SECONDS:
+                break
+    down = size * 8 / (last - first) / 1e6 if size and last > first else 0.0
+
+    # upload: a 1 MB probe, then a size that takes about UP_TARGET_SECONDS
+    def upload(n: int) -> float:
+        body = os.urandom(n)
+        t0 = clock()
+        r = c.post(f"{SPEED_URL}/__up", content=body)
+        return max(clock() - t0 - _server_ms(r.headers) / 1000, 1e-3)
+
+    probe = UP_PROBE_BYTES * 8 / upload(UP_PROBE_BYTES)  # bits per second
+    n = int(min(max(probe / 8 * UP_TARGET_SECONDS, UP_PROBE_BYTES), UP_MAX_BYTES))
+    up = n * 8 / upload(n) / 1e6
+    return {"down_mbps": round(down, 1), "up_mbps": round(up, 1), "ping_ms": round(ping, 1) if ping is not None else None,
+            "jitter_ms": round(jitter, 1), **info}
 
 
 class InternetMonitor:
@@ -105,28 +186,9 @@ class InternetMonitor:
     def speedtest(self) -> dict:
         import httpx
 
-        headers = {"User-Agent": "NetAgent"}
-        info = {}
-        with httpx.Client(timeout=60, headers=headers) as c:
-            try:
-                meta = c.get("https://speed.cloudflare.com/meta", timeout=10).json()
-                info = {"isp": meta.get("asOrganization", ""), "ip": meta.get("clientIp", ""), "city": meta.get("city", "")}
-            except Exception:  # noqa: BLE001
-                pass
-            start = time.monotonic()
-            c.get("https://speed.cloudflare.com/__down?bytes=0", timeout=10)
-            ping = (time.monotonic() - start) * 1000
-            start = time.monotonic()
-            size = 0
-            with c.stream("GET", f"https://speed.cloudflare.com/__down?bytes={DOWN_BYTES}") as r:
-                for chunk in r.iter_bytes():
-                    size += len(chunk)
-            down = size * 8 / (time.monotonic() - start) / 1e6
-            start = time.monotonic()
-            c.post("https://speed.cloudflare.com/__up", content=os.urandom(UP_BYTES))
-            up = UP_BYTES * 8 / (time.monotonic() - start) / 1e6
-        result = {"ts": datetime.now().isoformat(timespec="seconds"), "down_mbps": round(down, 1),
-                  "up_mbps": round(up, 1), "ping_ms": round(ping, 1), **info}
+        with httpx.Client(timeout=30, headers=SPEED_HEADERS) as c:
+            m = measure_speed(c)
+        result = {"ts": datetime.now().isoformat(timespec="seconds"), **m}
         self.state.update("isp_speedtests", lambda v: ((v or []) + [result])[-500:])
         return result
 
@@ -265,13 +327,25 @@ def speedtest_cmd(s, args, user) -> Result:
         t = monitor_for(s).speedtest()
     except Exception as exc:  # noqa: BLE001
         raise CommandError(f"სიჩქარის ტესტი ვერ შესრულდა ({type(exc).__name__}: {exc})") from None
+    return Result(format_speed(t), buttons=[Button("🩺 რატომ ნელია?", "/diagnose ინტერნეტი ნელია")]
+                  if t["down_mbps"] and t["up_mbps"] > 3 * t["down_mbps"] else [])
+
+
+def format_speed(t: dict) -> str:
+    jitter = t.get("jitter_ms") or 0
     lines = ["⚡ **ინტერნეტის სიჩქარე**",
              f"ჩამოტვირთვა (download): **{t['down_mbps']}** Mbps",
              f"ატვირთვა (upload): **{t['up_mbps']}** Mbps",
-             f"დაყოვნება (ping): {t['ping_ms']} ms"]
+             (f"დაყოვნება (ping): {t['ping_ms']} ms" if t.get("ping_ms") is not None else "დაყოვნება (ping): ვერ გაიზომა")
+             + (f" · რყევა ±{jitter:.0f} ms" if jitter >= 1 else "")]
     if t.get("isp"):
         lines.append(f"პროვაიდერი: {t['isp']}" + (f", {t['city']}" if t.get("city") else ""))
-    return Result("\n".join(lines))
+    if jitter >= 30:
+        lines.append("⚠️ დაყოვნება არასტაბილურია: ხან სწრაფია, ხან ძალიან ნელი (ხშირად Wi-Fi-ის ხმაურია, 2.4 GHz).")
+    if t["down_mbps"] and t["up_mbps"] > 3 * t["down_mbps"]:
+        lines.append("⚠️ ჩამოტვირთვა ატვირთვაზე ბევრად ნელია — ჩვეულებრივ პირიქით არის. "
+                     "სხვა მოწყობილობა ხომ არ ტვირთავს რამეს? ან პროვაიდერის მხარეს არის შეზღუდვა.")
+    return "\n".join(lines)
 
 
 COMMANDS = {"isp": isp_cmd, "speedtest": speedtest_cmd}
