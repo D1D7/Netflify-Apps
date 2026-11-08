@@ -62,6 +62,55 @@ function toast(text) {
   toastTimer = setTimeout(() => t.classList.remove("show"), 2200);
 }
 
+// ---------------------------------------------------------------- motion
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)");
+
+// restart a CSS animation class on an element, and take it off afterwards
+function replay(node, cls, ms = 900) {
+  if (!node || REDUCED.matches) return;
+  node.classList.remove(cls);
+  void node.offsetWidth;  // reflow, so the same class animates again
+  node.classList.add(cls);
+  clearTimeout(node[`_${cls}`]);
+  node[`_${cls}`] = setTimeout(() => node.classList.remove(cls), ms);
+}
+
+// count a number up/down to its new value (the hero "5/7")
+function countTo(node, to, render) {
+  const from = Number(node.dataset.n ?? 0);
+  node.dataset.n = String(to);
+  if (REDUCED.matches || from === to) { node.innerHTML = render(to); return; }
+  const t0 = performance.now(), dur = 700;
+  node.classList.add("counting");
+  // a hidden tab pauses animation frames: make sure the real value is shown anyway
+  clearTimeout(node._countDone);
+  node._countDone = setTimeout(() => { if (node.dataset.n === String(to)) { node.innerHTML = render(to); node.classList.remove("counting"); } }, dur + 200);
+  const tick = (now) => {
+    if (node.dataset.n !== String(to)) return;  // a newer value took over
+    const k = Math.min(1, (now - t0) / dur);
+    const ease = 1 - (1 - k) ** 3;
+    node.innerHTML = render(Math.round(from + (to - from) * ease));
+    if (k < 1) requestAnimationFrame(tick);
+    else node.classList.remove("counting");
+  };
+  requestAnimationFrame(tick);
+}
+
+// ripple where the finger / mouse pressed
+const RIPPLE = ".btn, .chip, .action, .tile, .suggestion, .list-row, .segmented button, .round-btn, .comp-btn, .tabbar button";
+document.addEventListener("pointerdown", (e) => {
+  const b = e.target.closest(RIPPLE);
+  if (!b || REDUCED.matches || b.disabled) return;
+  const r = b.getBoundingClientRect();
+  const size = Math.max(r.width, r.height);
+  const dot = document.createElement("span");
+  dot.className = "ripple";
+  dot.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX - r.left - size / 2}px;top:${e.clientY - r.top - size / 2}px`;
+  b.classList.add("rippling");
+  b.appendChild(dot);
+  setTimeout(() => dot.remove(), 600);
+}, { passive: true });
+
 // ---------------------------------------------------------------- theme
 
 function applyTheme(mode) {
@@ -636,7 +685,8 @@ function renderOverview() {
   badge.hidden = down === 0;
   badge.textContent = String(down);
 
-  $("#dash-summary").innerHTML = data.total ? `${data.up}<small>/${data.total}</small>` : "—";
+  if (data.total) countTo($("#dash-summary"), data.up, (n) => `${n}<small>/${data.total}</small>`);
+  else $("#dash-summary").innerHTML = "—";
   // ring gauge: cyan arc = reachable share, red arc right after it = unreachable share
   const pct = data.total ? Math.round((100 * data.up) / data.total) : 0;
   const gap = data.up && down ? 2 : 0;
@@ -650,6 +700,7 @@ function renderOverview() {
   $("#dash-sub").innerHTML = `<span class="${down ? "sub-bad" : "sub-ok"}">${down ? `${down} გათიშულია` : "ყველაფერი რიგზეა"}</span><span>განახლდა ${esc(checked)}</span>`;
 
   const tiles = $("#tiles");
+  tiles.classList.toggle("no-anim", tiles.childElementCount > 0);  // the cards fly in once, not on every refresh
   tiles.replaceChildren();
   const tile = (ico, label, value, sub, tone, cmd) => {
     const t = el("button", `tile${tone ? ` ${tone}` : ""}`,
@@ -710,10 +761,11 @@ function renderIsp(isp) {
   });
   const speed = isp.last_speed ? `ჩამოტვირთვა ${isp.last_speed.down_mbps} · ატვირთვა ${isp.last_speed.up_mbps} Mbps` : "სიჩქარე: /speedtest";
   card.innerHTML = `<div class="isp-title">${icon("network")}<span>ინტერნეტი</span></div>
-    <div class="isp-big"></div><svg class="isp-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${gaps}<path d="${d}"/></svg>
+    <div class="isp-big"></div><svg class="isp-chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${gaps}<path d="${d}" pathLength="1"${card.dataset.drawn ? "" : ' class="draw"'}/></svg>
     <div class="isp-sub"></div>`;
   card.querySelector(".isp-big").textContent = isp.down_now ? "🔴 არ არის" : `${isp.uptime ?? "—"}%`;
   card.querySelector(".isp-sub").textContent = `${isp.latency != null ? `${isp.latency} ms` : ""} · გათიშვები 24 სთ: ${isp.outages} · ${speed}`;
+  card.dataset.drawn = "1";
   card.onclick = () => send("/isp");
 }
 
@@ -888,7 +940,7 @@ function mapPopup(n, fx, fy) {
 
 // ---------------------------------------------------------------- Live Devices
 // Polls /api/live while the tab is open (the server pings in the background, so nothing here blocks).
-const live = { data: null, sort: "ip", dir: 1, search: "", selected: null, timer: null, detailAt: 0, filter: "all", days: 1 };
+const live = { prev: {}, fresh: true, data: null, sort: "ip", dir: 1, search: "", selected: null, timer: null, detailAt: 0, filter: "all", days: 1 };
 
 const ipNum = (ip) => ip.split(".").reduce((n, o) => n * 256 + Number(o), 0);
 const LIVE_SORT = {
@@ -971,7 +1023,10 @@ function renderLive() {
     body.appendChild(tr);
   }
   for (const r of rows) {
-    const tr = el("tr", `${r.online ? "is-on" : "is-off"}${r.new ? " is-new" : ""}${live.selected === r.key ? " is-sel" : ""}`);
+    const was = live.prev[r.key];
+    const flash = was === undefined || was === r.online ? "" : r.online ? " flash-on" : " flash-off";
+    live.prev[r.key] = r.online;
+    const tr = el("tr", `${r.online ? "is-on" : "is-off"}${r.new ? " is-new" : ""}${live.selected === r.key ? " is-sel" : ""}${flash}`);
     tr.tabIndex = 0;
     const st = el("td", "c-st", `<span class="lv-dot"></span><span class="sr-only"></span>`);
     st.lastChild.textContent = r.online ? "Online" : "Offline";
@@ -1145,6 +1200,7 @@ async function loadLive() {
   try {
     live.data = await apiJson("/api/live");
     renderLive();
+    if (live.fresh && live.data.devices.length) { live.fresh = false; replay($(".live-table"), "rows-in", 1200); }
   } catch (err) {
     if (err.message !== "unauthorized") {
       $("#live-summary").textContent = `⚠️ ${err.message}`;
@@ -1154,6 +1210,7 @@ async function loadLive() {
 
 function startLive() {
   stopLive();
+  live.fresh = true;
   const step = async () => {
     if (state.view !== "live") return;
     if (!document.hidden) await loadLive();
@@ -1187,7 +1244,12 @@ function applyLayout() {
   app.classList.toggle("two-pane", two);
   app.dataset.view = state.view;
   const sidePane = two && state.view === "chat";
-  for (const v of ["chat", "dash", "settings", "term", "live"]) $(`#view-${v}`).hidden = !(v === state.view || (sidePane && v === "dash"));
+  for (const v of ["chat", "dash", "settings", "term", "live"]) {
+    const node = $(`#view-${v}`);
+    const show = v === state.view || (sidePane && v === "dash");
+    if (show && node.hidden) replay(node, "view-in", 800);
+    node.hidden = !show;
+  }
   const [title, sub] = VIEW_TITLES[state.view];
   $("#view-title").textContent = title;
   $("#view-sub").textContent = sidePane ? "ჩატი და ქსელი ერთად" : sub;

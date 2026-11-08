@@ -1,0 +1,115 @@
+/* NetAgent motion: short, purposeful animations. Everything is switched off by prefers-reduced-motion. */
+
+/* ---- views: the opened tab slides in, its cards follow one after another ---- */
+.view.view-in { animation: view-in 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes view-in { from { opacity: 0; transform: translateY(10px); } }
+.view.view-in.scroll > * { animation: card-in 0.42s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.view.view-in.scroll > *:nth-child(2) { animation-delay: 0.04s; }
+.view.view-in.scroll > *:nth-child(3) { animation-delay: 0.08s; }
+.view.view-in.scroll > *:nth-child(4) { animation-delay: 0.12s; }
+.view.view-in.scroll > *:nth-child(5) { animation-delay: 0.16s; }
+.view.view-in.scroll > *:nth-child(6) { animation-delay: 0.2s; }
+.view.view-in.scroll > *:nth-child(n+7) { animation-delay: 0.24s; }
+@keyframes card-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } }
+
+/* ---- tab bar: the chosen icon gives a small bounce ---- */
+.tabbar button.active .tab-ico { animation: tab-pop 0.38s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes tab-pop { 0% { transform: scale(0.82); } 100% { transform: scale(1); } }
+#tab-badge:not([hidden]) { animation: badge-in 0.4s cubic-bezier(0.3, 1.8, 0.5, 1); }
+@keyframes badge-in { from { transform: scale(0); } }
+
+/* ---- hero: the ring draws itself, the hub logo turns slowly ---- */
+#ring-up, #ring-down { stroke-dasharray: 0 100; }
+.hero::after { animation: hub-turn 60s linear infinite; }
+@keyframes hub-turn { to { transform: rotate(360deg); } }
+.hero-value.counting { font-variant-numeric: tabular-nums; }
+.round-btn:active .icon { transform: rotate(-90deg); transition: transform 0.2s; }
+
+/* ---- tiles and quick actions ---- */
+.tiles > .tile { animation: card-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.tiles > .tile:nth-child(2) { animation-delay: 0.05s; }
+.tiles > .tile:nth-child(3) { animation-delay: 0.1s; }
+.tiles > .tile:nth-child(4) { animation-delay: 0.15s; }
+.tiles.no-anim > .tile { animation: none; }
+.tile.bad .tile-label .icon { animation: shake 2.4s ease-in-out infinite; }
+@keyframes shake { 0%, 88%, 100% { transform: rotate(0); } 91% { transform: rotate(-12deg); } 94% { transform: rotate(10deg); } 97% { transform: rotate(-6deg); } }
+
+/* ---- internet chart: the line draws from left to right the first time ---- */
+.isp-chart path.draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1.2s ease-out forwards; }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+/* ---- network map: traffic flows along the cables, nodes pop in, a down node sends out red waves ---- */
+.map-link.l-ok, .map-link.l-warn, .map-link.l-bad { stroke-dasharray: 10 7; animation: flow 1.6s linear infinite; }
+.map-link.l-warn { animation-duration: 1s; }
+.map-link.l-bad { animation-duration: 0.6s; }
+@keyframes flow { to { stroke-dashoffset: -17; } }
+.map-svg .map-node { animation: node-in 0.45s cubic-bezier(0.3, 1.5, 0.5, 1) backwards; transform-box: fill-box; transform-origin: center; }
+.map-svg .map-node:nth-of-type(2n) { animation-delay: 0.06s; }
+.map-svg .map-node:nth-of-type(3n) { animation-delay: 0.12s; }
+@keyframes node-in { from { opacity: 0; transform: scale(0.4); } }
+.map-node.down circle { animation: node-alarm 1.6s ease-out infinite; }
+@keyframes node-alarm { 0% { filter: drop-shadow(0 0 0 rgba(239, 68, 68, 0.9)); } 70%, 100% { filter: drop-shadow(0 0 9px rgba(239, 68, 68, 0)); } }
+.map-node:hover circle, .map-node:focus circle { r: 22; }
+
+/* ---- Live Devices: rows slide in on opening; a device that goes on/offline flashes ---- */
+.live-table.rows-in tbody tr { animation: row-in 0.35s ease-out backwards; }
+.live-table.rows-in tbody tr:nth-child(2) { animation-delay: 0.03s; }
+.live-table.rows-in tbody tr:nth-child(3) { animation-delay: 0.06s; }
+.live-table.rows-in tbody tr:nth-child(4) { animation-delay: 0.09s; }
+.live-table.rows-in tbody tr:nth-child(5) { animation-delay: 0.12s; }
+.live-table.rows-in tbody tr:nth-child(6) { animation-delay: 0.15s; }
+.live-table.rows-in tbody tr:nth-child(n+7) { animation-delay: 0.18s; }
+@keyframes row-in { from { opacity: 0; transform: translateX(-12px); } }
+.live-table tr.flash-on { animation: flash-on 1.6s ease-out; }
+.live-table tr.flash-off { animation: flash-off 1.6s ease-out; }
+@keyframes flash-on { 0%, 30% { background: rgba(34, 211, 238, 0.22); } }
+@keyframes flash-off { 0%, 30% { background: rgba(239, 68, 68, 0.2); } }
+.live-table tr.is-on .lv-dot { animation: live 2.4s infinite; }
+.lv-detail, .lv-panel { animation: card-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+
+/* ---- chat ---- */
+.empty-logo { animation: float 4s ease-in-out infinite; }
+@keyframes float { 50% { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(34, 211, 238, 0.22); } }
+.suggestions > .suggestion { animation: card-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+.suggestions > .suggestion:nth-child(2) { animation-delay: 0.07s; }
+.suggestions > .suggestion:nth-child(3) { animation-delay: 0.14s; }
+.suggestions > .suggestion:nth-child(4) { animation-delay: 0.21s; }
+.msg.user { animation: bubble-user 0.28s cubic-bezier(0.2, 1.2, 0.4, 1); transform-origin: right bottom; }
+.msg.bot { animation: bubble-bot 0.32s cubic-bezier(0.2, 1.1, 0.4, 1); transform-origin: left bottom; }
+@keyframes bubble-user { from { opacity: 0; transform: translateY(8px) scale(0.94); } }
+@keyframes bubble-bot { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+.msg .buttons button { animation: card-in 0.35s ease-out backwards; animation-delay: 0.15s; }
+
+/* ---- login: the card rises, the logo glows, radar rings spread behind it ---- */
+.login { position: relative; overflow: hidden; }
+.login::before, .login::after {
+  content: ""; position: absolute; left: 50%; top: 0; width: 520px; height: 520px; margin: -260px 0 0 -260px;
+  border-radius: 50%; border: 1px solid rgba(34, 211, 238, 0.35); pointer-events: none; z-index: 0;
+  animation: radar 5s ease-out infinite;
+}
+.login::after { animation-delay: 2.5s; }
+@keyframes radar { from { transform: scale(0.2); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+.login-card { position: relative; z-index: 1; animation: login-in 0.55s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
+@keyframes login-in { from { opacity: 0; transform: translateY(24px) scale(0.96); } }
+.login-logo { animation: glow 3s ease-in-out infinite; }
+@keyframes glow { 50% { box-shadow: 0 10px 44px rgba(34, 211, 238, 0.6); transform: translateY(-2px); } }
+.login-foot { position: relative; z-index: 1; }
+#login-error:not(:empty) { animation: shake-x 0.4s; }
+@keyframes shake-x { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+
+/* ---- ripple on press ---- */
+.rippling { position: relative; overflow: hidden; }
+.ripple {
+  position: absolute; border-radius: 50%; pointer-events: none; transform: scale(0); opacity: 0.35;
+  background: currentColor; animation: ripple 0.55s ease-out forwards;
+}
+@keyframes ripple { to { transform: scale(2.6); opacity: 0; } }
+
+/* ---- toast springs in ---- */
+.toast.show { animation: toast-in 0.4s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes toast-in { from { transform: translate(-50%, 16px) scale(0.9); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  #ring-up, #ring-down { transition: none; }
+}
