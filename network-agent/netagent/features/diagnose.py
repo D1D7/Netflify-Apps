@@ -740,3 +740,95 @@ TOOLS = [
                        "required": []}},
      lambda ctx, problem="": diagnose(ctx.services, problem).as_dict()),
 ]
+
+
+# -- automatic diagnosis when something goes down ----------------------------------------------------------
+# A "device down" or "internet down" alert starts a diagnosis in the background; its root cause follows as a
+# second alert a few seconds later. During an internet outage that alert cannot leave the house, so the cause
+# is also kept and repeated with the "internet is back" alert.
+AUTO_COOLDOWN = 600  # seconds between automatic diagnoses of the same target
+ISP_KEY = "autodiag_isp"
+_MONITORING = None
+_RUNNING: set[str] = set()
+
+
+def auto_enabled() -> bool:
+    import os
+
+    return os.getenv("NETAGENT_AUTODIAGNOSE", "on").strip().lower() not in {"off", "0", "false", "no"}
+
+
+def jobs(monitoring) -> list:
+    global _MONITORING
+    _MONITORING = monitoring  # kept so on_alert can emit the follow-up alert
+    return []
+
+
+def auto_target(alert) -> str | None:
+    """What to diagnose for this alert: a device name, "" for the internet, None for nothing."""
+    if alert.kind == "down" and alert.devices:
+        return alert.devices[0]
+    if alert.kind == "isp" and "გაითიშა" in alert.text:
+        return ""
+    return None
+
+
+def summary(d: Diagnosis, target: str, others: list[str] | None = None) -> str:
+    head = f"🩺 **ავტოდიაგნოსტიკა — {target or 'ინტერნეტი'}**"
+    if others:
+        head += f" (ასევე მიუწვდომელია: {', '.join(others[:4])})"
+    lines = [head, f"🎯 {d.cause or 'მიზეზი ვერ დადგინდა'}"]
+    if d.fix:
+        lines.append(f"🔧 {d.fix[0]}")
+    return "\n".join(lines)
+
+
+async def _auto(s, key: str, target: str, alert) -> None:
+    import asyncio
+
+    from ..monitoring import Alert
+
+    try:
+        d = await asyncio.to_thread(diagnose, s, target)
+        if key == "internet":
+            s.state.set(ISP_KEY, {"ts": datetime.now().isoformat(timespec="seconds"), "cause": d.cause})
+        cmd = f"/diagnose {target}".strip()
+        await _MONITORING.emit(Alert("diagnosis", summary(d, target, alert.devices[1:]), list(alert.devices),
+                                     mutable=False, buttons=[Button("🩺 სრულად", cmd)]))
+    except Exception:  # noqa: BLE001 - a failed diagnosis must never break alerting
+        import logging
+
+        logging.getLogger("netagent.diagnose").exception("auto diagnosis failed")
+    finally:
+        _RUNNING.discard(key)
+
+
+def on_alert(s, alert) -> None:
+    import asyncio
+
+    if _MONITORING is None or not auto_enabled() or alert.kind == "diagnosis":
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if alert.kind == "isp" and "აღდგა" in alert.text:
+        kept = s.state.get(ISP_KEY)
+        if kept and kept.get("cause"):
+            s.state.set(ISP_KEY, None)
+            from ..monitoring import Alert
+
+            loop.create_task(_MONITORING.emit(Alert(
+                "diagnosis", f"🩺 **გათიშვის მიზეზი** (გაზომილი {kept['ts'][11:16]}-ზე)\n🎯 {kept['cause']}", [], mutable=False,
+                buttons=[Button("📄 ISP რეპორტი", "/isp report 1")])))
+        return
+    target = auto_target(alert)
+    if target is None:
+        return
+    key = target or "internet"
+    last = (s.state.get("autodiag_last") or {}).get(key, 0)
+    if key in _RUNNING or time.time() - last < AUTO_COOLDOWN:
+        return
+    _RUNNING.add(key)
+    s.state.update("autodiag_last", lambda v: {**(v or {}), key: time.time()})
+    loop.create_task(_auto(s, key, target, alert))

@@ -496,6 +496,7 @@ const QUICK = [
   ["file", "blue", "ჟურნალი", "/activity"],
   ["report", "violet", "რეპორტი", "/report"],
   ["shield", "amber", "აუდიტი", "/audit"],
+  ["lock", "red", "დაცვა", "/security"],
   ["help", "amber", "Runbook", "/runbook"],
   ["save", "green", "Backup", "/backup"],
   ["server", "blue", "Inventory", "/devices"],

@@ -35,7 +35,7 @@ class Alert:
                 "syslog": "📜 ლოგის ალერტი", "newdevice": "🆕 ახალი მოწყობილობა ქსელში",
                 "isp": "🌐 ინტერნეტი", "site": "🌐 საიტი / სერვისი", "escalation": "⏰ შეხსენება",
                 "scheduled": "🗓 განრიგი", "security": "🔐 უსაფრთხოება",
-                "presence": "🏠 ვინ არის სახლში"}.get(self.kind, "NetAgent")
+                "presence": "🏠 ვინ არის სახლში", "diagnosis": "🩺 ავტოდიაგნოსტიკა"}.get(self.kind, "NetAgent")
 
 
 Notifier = Callable[[Alert], Awaitable[None]]
