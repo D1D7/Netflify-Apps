@@ -213,7 +213,7 @@ def running(root: Path | None = None) -> bool:
     return st.get("status") in {"starting", "running"} and _alive(st.get("pid", 0))
 
 
-def start(mode: str = "quick", root: Path | None = None, popen=subprocess.Popen) -> dict:
+def start_test(mode: str = "quick", root: Path | None = None, popen=subprocess.Popen) -> dict:
     import psutil
 
     if mode not in MODES:
@@ -291,7 +291,7 @@ def memtest_cmd(s, args, user) -> Result:
     if sub in {"quick", "full", "stop", "reboot"} and is_viewer(user):
         raise CommandError(DENIED)
     if sub in MODES:
-        st = start(sub)
+        st = start_test(sub)
         return Result(f"🧠 RAM-ის ტესტი დაიწყო: {st['mb'] / 1024:.1f} GB (~{st['coverage_pct']}%), {st['passes']} გავლა. "
                       "პროგრესი — PC ჩანართზე ან /memtest.", buttons=[Button("⏹ შეჩერება", "/memtest stop")])
     if sub == "stop":

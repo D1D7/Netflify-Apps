@@ -60,22 +60,22 @@ def test_start_and_stop(tmp_path, monkeypatch):
     gb = 2**30
     monkeypatch.setattr(psutil, "virtual_memory", lambda: NS(total=16 * gb, available=3 * gb))
     calls = []
-    st = mt.start("quick", tmp_path, popen=lambda args, **kw: calls.append((args, kw)) or NS(pid=4242))
+    st = mt.start_test("quick", tmp_path, popen=lambda args, **kw: calls.append((args, kw)) or NS(pid=4242))
     assert st["passes"] == 1 and st["mb"] == mt.plan_mb(16 * gb, 3 * gb) and st["coverage_pct"] == round(100 * st["mb"] / 16384)
     args, kw = calls[0]
     assert args[:3] == [sys.executable, "-m", "netagent.features.memtest"] and "--passes" in args
     assert mt.read_status(tmp_path)["pid"] == 4242
     monkeypatch.setattr(mt, "_alive", lambda pid: pid == 4242)
     with pytest.raises(Exception, match="უკვე მიმდინარეობს"):
-        mt.start("full", tmp_path, popen=lambda *a, **k: NS(pid=1))
+        mt.start_test("full", tmp_path, popen=lambda *a, **k: NS(pid=1))
     assert mt.stop(tmp_path) and (tmp_path / "memtest.stop").exists()
     monkeypatch.setattr(mt, "_alive", lambda pid: False)
     assert not mt.stop(tmp_path)
     with pytest.raises(Exception):
-        mt.start("forever", tmp_path)
+        mt.start_test("forever", tmp_path)
     monkeypatch.setattr(psutil, "virtual_memory", lambda: NS(total=16 * gb, available=300 * 2**20))
     with pytest.raises(Exception, match="ძალიან ცოტაა"):
-        mt.start("quick", tmp_path, popen=lambda *a, **k: NS(pid=1))
+        mt.start_test("quick", tmp_path, popen=lambda *a, **k: NS(pid=1))
 
 
 def test_command_permissions_and_status(tmp_path, monkeypatch):
@@ -96,3 +96,15 @@ def test_windows_diagnostic_opens_elevated():
     assert mt.schedule_windows_diagnostic(shell=lambda *a: seen.append(a) or 42)
     assert seen[0][1:3] == ("runas", "mdsched.exe")
     assert not mt.schedule_windows_diagnostic(shell=lambda *a: 5)  # UAC declined
+
+
+def test_feature_start_hooks_are_plugin_hooks():
+    """features.start() calls every module's start(services, monitoring): a helper must not use that name."""
+    import inspect
+
+    from netagent import features
+
+    for m in features.modules():
+        fn = getattr(m, "start", None)
+        if fn is not None:
+            assert inspect.iscoroutinefunction(fn) and list(inspect.signature(fn).parameters)[:2] == ["services", "monitoring"], m.__name__

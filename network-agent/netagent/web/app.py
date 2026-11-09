@@ -511,7 +511,7 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         body = await _json(request)
         try:
             if action == "start":
-                st = await asyncio.to_thread(memtest.start, str(body.get("mode", "quick")))
+                st = await asyncio.to_thread(memtest.start_test, str(body.get("mode", "quick")))
             elif action == "stop":
                 st = {"stopping": memtest.stop()}
             elif action == "reboot":
