@@ -587,6 +587,13 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         log_event(settings.audit_log_path, user=request.state.who, tool=f"surfscan_{action}", args=body, ok=True)
         return r
 
+    @app.get("/api/bandwidth")
+    async def bandwidth_api(period: str = "15"):
+        from ..features import talkers
+
+        period = period if period in {"today", "week"} or period.isdigit() else "15"
+        return await asyncio.to_thread(talkers.report, services.state, period)
+
     @app.get("/api/memtest")
     async def memtest_status():
         from ..features import memtest

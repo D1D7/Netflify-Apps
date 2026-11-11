@@ -565,6 +565,7 @@ const QUICK = [
   ["radar", "blue", "Wi-Fi არხები", "/wifiscan"],
   ["radar", "violet", "Wi-Fi ოთახებში", "/rooms"],
   ["alert", "red", "Wi-Fi გაწყვეტები", "/wifidrops"],
+  ["pulse", "green", "ვინ ჭამს ინტერნეტს", "/bandwidth"],
   ["shield", "red", "ყალბი Wi-Fi", "/eviltwin"],
   ["pulse", "amber", "Bufferbloat", "/bufferbloat"],
   ["network", "violet", "სერვისები", "/services"],
@@ -1534,6 +1535,48 @@ async function loadSurf() {
   try { renderSurf(await apiJson("/api/surfscan")); } catch { /* ignore */ }
 }
 
+// ---------------------------------------------------------------- who uses the internet
+
+const bw = { period: "15", timer: null };
+const bwHuman = (n) => (n >= 1e12 ? `${(n / 1e12).toFixed(1)} TB` : n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${(n / 1e3).toFixed(0)} KB` : `${Math.round(n)} B`);
+const bwRate = (b) => (b >= 1e5 ? `${(b / 1e6).toFixed(1)} Mbps` : `${Math.round(b / 1e3)} kbps`);
+
+function renderBandwidth(r) {
+  const list = $("#bw-list");
+  list.replaceChildren();
+  const rows = r.rows || [];
+  const max = Math.max(1, ...rows.map((x) => x.down + x.up + (x.down_bps + x.up_bps) / 8));
+  for (const x of rows.slice(0, 12)) {
+    const val = x.down + x.up + (x.down_bps + x.up_bps) / 8;
+    const row = el("div", "bw-row", `<span class="lv-kind">${icon(x.icon || "help")}</span><div class="bw-main">
+        <div class="bw-top"><b></b><span></span></div><div class="bw-bar"><span class="d"></span><span class="u"></span></div><div class="bw-sub"></div></div>`);
+    row.querySelector("b").textContent = x.name;
+    row.querySelector(".bw-top span").textContent = bwHuman(x.down + x.up);
+    const share = (100 * val) / max;
+    const dShare = x.down + x.up ? (x.down / (x.down + x.up)) * share : share;
+    row.querySelector(".bw-bar .d").style.width = `${dShare}%`;
+    row.querySelector(".bw-bar .u").style.width = `${Math.max(0, share - dShare)}%`;
+    row.querySelector(".bw-sub").textContent = [`ჩამოტვირთვა (download) ${bwHuman(x.down)}`, `ატვირთვა (upload) ${bwHuman(x.up)}`,
+      x.down_bps > 1e4 ? `ახლა ${bwRate(x.down_bps)}` : "", x.ip && x.ip !== x.name ? x.ip : "", x.port ? `პორტი ${x.port}` : ""].filter(Boolean).join(" · ");
+    list.appendChild(row);
+  }
+  if (!rows.length && !r.hint) list.appendChild(Object.assign(el("div", "empty-note"), { textContent: "ამ პერიოდში ტრაფიკი არ ჩანს." }));
+  $("#bw-apps").textContent = (r.apps || []).length ? `რა: ${r.apps.map((a) => `${a.app} ${bwHuman(a.bytes)}`).join(" · ")}` : "";
+  const hint = $("#bw-hint");
+  hint.replaceChildren();
+  if (r.hint) {
+    const [first, ...rest] = r.hint.split("\n");
+    hint.appendChild(Object.assign(el("p"), { textContent: first }));
+    if (rest.length) hint.appendChild(Object.assign(el("pre"), { textContent: rest.join("\n") }));
+  }
+}
+
+async function loadBandwidth() {
+  clearTimeout(bw.timer);
+  try { renderBandwidth(await apiJson(`/api/bandwidth?period=${bw.period}`)); } catch { /* ignore */ }
+  if (state.view === "dash" && !document.hidden) bw.timer = setTimeout(loadBandwidth, 30000);
+}
+
 async function loadOverview() {
   const btn = $("#dash-refresh");
   btn.classList.add("spinning");
@@ -2026,7 +2069,7 @@ function switchView(name) {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const sidePane = applyLayout();
   if (name === "dash" || (sidePane && !state.overview)) loadOverview();
-  if (name === "dash") { loadMap(); loadRooms(); loadDz(); loadConsole(); }
+  if (name === "dash") { loadMap(); loadRooms(); loadDz(); loadConsole(); loadBandwidth(); }
   if (name !== "dash") dzWalkStop();
   if (name === "settings") {
     refreshPushUI();
@@ -2459,6 +2502,11 @@ async function init() {
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
   $("#con-refresh").addEventListener("click", () => loadConsole());
+  document.querySelectorAll("#bw-period button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("#bw-period button").forEach((x) => x.classList.toggle("on", x === b));
+    bw.period = b.dataset.p;
+    loadBandwidth();
+  }));
   $("#hw-refresh").addEventListener("click", () => { loadHw(true); loadSysinfo(true); });
   $("#ss-start").addEventListener("click", () => {
     const opt = $("#ss-disk").selectedOptions[0];

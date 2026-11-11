@@ -1208,3 +1208,23 @@ button.list-row:active { background: var(--surface-2); }
 .dz-cell.is-mesh::before { content: "⭐"; position: absolute; top: 1px; right: 3px; font-size: 10px; }
 #dz-router.on { color: var(--accent); font-weight: 700; text-decoration: underline; }
 .dz-line.mesh { color: #a78bfa; font-weight: 600; } .dz-line.note { color: var(--text-2); }
+
+/* ---- who uses the internet ---- */
+.bw-card .map-head { gap: 8px; flex-wrap: wrap; }
+.bw-period button { font-size: 11.5px; padding: 4px 9px; }
+.bw-list { display: grid; gap: 8px; margin-top: 10px; }
+.bw-row { display: flex; gap: 10px; align-items: center; }
+.bw-row .lv-kind { flex: none; }
+.bw-main { flex: 1; min-width: 0; }
+.bw-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; }
+.bw-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bw-top span { font-variant-numeric: tabular-nums; color: var(--text-2); flex: none; }
+.bw-bar { display: flex; height: 7px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin: 4px 0 2px; }
+.bw-bar span { display: block; height: 100%; transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.bw-bar .d { background: var(--accent); } .bw-bar .u { background: #a78bfa; }
+.bw-sub { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.bw-apps { font-size: 12px; color: var(--text-2); margin-top: 8px; }
+.bw-apps:empty, .bw-hint:empty { display: none; }
+.bw-hint { font-size: 12.5px; color: var(--text-2); margin-top: 8px; }
+.bw-hint p { margin: 0 0 6px; white-space: pre-line; }
+.bw-hint pre { font-size: 11.5px; background: var(--surface-2); padding: 8px; border-radius: 8px; white-space: pre-wrap; margin: 0; }
