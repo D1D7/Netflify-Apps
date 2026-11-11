@@ -45,7 +45,8 @@ SSID 3 :
 def test_parse_netsh_networks():
     nets = quality.parse_netsh_networks(NETSH)
     assert [n["ssid"] for n in nets] == ["Biker", "Sweetvenom", "(დამალული)"]
-    assert nets[0] == {"ssid": "Biker", "bssid": "28:5b:0c:56:da:2f", "signal": 84, "channel": 8, "band": "2.4 GHz", "util": None}
+    assert nets[0] == {"ssid": "Biker", "bssid": "28:5b:0c:56:da:2f", "signal": 84, "channel": 8, "band": "2.4 GHz", "util": None,
+                       "auth": "WPA2-Personal", "enc": ""}
     assert nets[1]["util"] == 11
     assert nets[2]["band"] == "5 GHz"
 

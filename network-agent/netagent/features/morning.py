@@ -95,6 +95,17 @@ def build(s, hours: float = 12, now: datetime | None = None, live=None) -> str:
     except Exception:  # noqa: BLE001
         pass
 
+    # Wi-Fi drops overnight
+    try:
+        from . import wifidrops
+
+        if wifidrops.subprocess and __import__("os").name == "nt":
+            wd = wifidrops.analyse(wifidrops.read_events(1))
+            if wd["count_24h"]:
+                lines.append(f"📶 Wi-Fi გაწყდა {wd['count_24h']}-ჯერ ბოლო 24 სთ-ში — /wifidrops")
+    except Exception:  # noqa: BLE001
+        pass
+
     # DNS
     try:
         from .dnsfilter import RUNNING, STATS

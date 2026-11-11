@@ -71,16 +71,23 @@ def trigger_scan(wait: float = 4.0) -> bool:
 
 def parse_netsh_networks(text: str) -> list[dict]:
     """`netsh wlan show networks mode=bssid` -> one dict per access point (BSSID)."""
-    out, ssid, cur = [], "", None
+    out, ssid, cur, auth, enc = [], "", None, "", ""
     for raw in text.splitlines():
         line = raw.strip()
         m = re.match(r"^SSID \d+\s*:\s*(.*)$", line)
         if m:
-            ssid = m.group(1).strip()
+            ssid, auth, enc, cur = m.group(1).strip(), "", "", None
             continue
+        if cur is None and ":" in line:
+            k, _, v = (x.strip() for x in line.partition(":"))
+            if k.lower() == "authentication":
+                auth = v
+            elif k.lower() == "encryption":
+                enc = v
         m = re.match(r"^BSSID \d+\s*:\s*([0-9a-fA-F:]{17})", line)
         if m:
-            cur = {"ssid": ssid or "(დამალული)", "bssid": m.group(1).lower(), "signal": 0, "channel": 0, "band": "", "util": None}
+            cur = {"ssid": ssid or "(დამალული)", "bssid": m.group(1).lower(), "signal": 0, "channel": 0, "band": "", "util": None,
+                   "auth": auth, "enc": enc}
             out.append(cur)
             continue
         if cur is None or ":" not in line:

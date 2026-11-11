@@ -95,7 +95,8 @@ def _windows_wifi() -> dict | None:
     if not field("SSID"):
         return {}
     return {"ssid": field("SSID"), "signal": field("Signal"), "channel": field("Channel"), "radio": field("Radio type"),
-            "rx": field("Receive rate \\(Mbps\\)"), "tx": field("Transmit rate \\(Mbps\\)"), "band": field("Band")}
+            "rx": field("Receive rate \\(Mbps\\)"), "tx": field("Transmit rate \\(Mbps\\)"), "band": field("Band"),
+            "bssid": (field("AP BSSID", "BSSID") or "").lower(), "auth": field("Authentication")}
 
 
 def wifi(s, args) -> RunbookResult:

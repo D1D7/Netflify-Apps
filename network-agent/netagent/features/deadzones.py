@@ -24,13 +24,13 @@ MIN_SIZE, MAX_SIZE = 2, 10
 
 
 def blank(cols: int = 6, rows: int = 4) -> dict:
-    return {"cols": cols, "rows": rows, "cells": {}, "spots": []}
+    return {"cols": cols, "rows": rows, "cells": {}, "spots": [], "router": None}
 
 
 def load(state) -> dict:
     v = state.get(KEY) or {}
     out = blank()
-    out.update({k: v[k] for k in ("cols", "rows", "cells", "spots") if k in v})
+    out.update({k: v[k] for k in ("cols", "rows", "cells", "spots", "router") if k in v})
     return out
 
 
@@ -97,6 +97,80 @@ def save_cell(state, row, col, res: dict) -> dict:
     return m
 
 
+def set_router(state, row, col) -> dict:
+    """Mark the router's square (the same square again clears it)."""
+    def fn(v):
+        v = v or blank()
+        r, c = int(row), int(col)
+        if not (0 <= r < v.get("rows", 4) and 0 <= c < v.get("cols", 6)):
+            raise CommandError("ეს უჯრა ბადის გარეთაა")
+        v["router"] = None if v.get("router") == f"{r},{c}" else f"{r},{c}"
+        return v
+
+    try:
+        return state.update(KEY, fn)
+    except (TypeError, ValueError):
+        raise CommandError("უჯრის ნომერი არასწორია") from None
+
+
+def _rc(key: str) -> tuple[int, int]:
+    r, c = key.split(",")
+    return int(r), int(c)
+
+
+def _line_dist(p, a, b) -> float:
+    """Distance of square p from the straight line a→b (in squares)."""
+    (pr, pc), (ar, ac), (br, bc) = p, a, b
+    dr, dc = br - ar, bc - ac
+    n = (dr * dr + dc * dc) ** 0.5 or 1.0
+    return abs(dr * (ac - pc) - dc * (ar - pr)) / n
+
+
+def mesh_advice(m: dict) -> dict:
+    """Where a mesh point / repeater helps: for each dead or weak square, the measured good/OK square on the way from
+    the router that is closest to the problem (a repeater needs good signal itself). Plus a router move when the router
+    stands far from the middle of the measured home."""
+    out = {"mesh": [], "move_router": None, "need_router": False}
+    cells = m.get("cells") or {}
+    bad = [k for k, c in cells.items() if c.get("class") in {"dead", "weak"}]
+    if not m.get("router"):
+        out["need_router"] = bool(bad)
+        return out
+    router = _rc(m["router"])
+    good = {k: c for k, c in cells.items() if c.get("class") in {"good", "ok"}}
+    for k in sorted(bad, key=lambda k: (cells[k]["class"] != "dead", k)):
+        target = _rc(k)
+        dist_rt = ((target[0] - router[0]) ** 2 + (target[1] - router[1]) ** 2) ** 0.5
+        best = None
+        for g in good:
+            p = _rc(g)
+            d_r = ((p[0] - router[0]) ** 2 + (p[1] - router[1]) ** 2) ** 0.5
+            d_t = ((p[0] - target[0]) ** 2 + (p[1] - target[1]) ** 2) ** 0.5
+            if d_r < dist_rt and d_t < dist_rt and _line_dist(p, router, target) <= 1.01:
+                score = (d_t, -d_r)  # as close to the problem as possible while the signal is still good
+                if best is None or score < best[0]:
+                    best = (score, g)
+        if best:
+            out["mesh"].append({"for": cell_name(k), "at": cell_name(best[1]), "measured": True})
+        else:  # nothing measured on the way: suggest the middle of the way, to be measured first
+            mid = (round((router[0] + target[0]) / 2), round((router[1] + target[1]) / 2))
+            if mid != router and mid != target:
+                out["mesh"].append({"for": cell_name(k), "at": cell_name(f"{mid[0]},{mid[1]}"), "measured": False})
+    tested = [_rc(k) for k in cells]
+    if len(tested) >= 4 and bad:
+        cr = sum(r for r, _ in tested) / len(tested)
+        cc = sum(c for _, c in tested) / len(tested)
+        if ((router[0] - cr) ** 2 + (router[1] - cc) ** 2) ** 0.5 >= 1.5:
+            out["move_router"] = cell_name(f"{round(cr)},{round(cc)}")
+    # one mesh point often covers several problems: group by suggested square
+    grouped: dict[str, dict] = {}
+    for x in out["mesh"]:
+        g = grouped.setdefault(x["at"], {"at": x["at"], "for": [], "measured": x["measured"]})
+        g["for"].append(x["for"])
+    out["mesh"] = sorted(grouped.values(), key=lambda g: -len(g["for"]))
+    return out
+
+
 def save_spot(state, name: str, res: dict) -> dict:
     name = re.sub(r"\s+", " ", str(name or "")).strip()[:40] or datetime.now().strftime("ადგილი %H:%M")
     m = measurement(res)
@@ -150,6 +224,14 @@ def format_deadzones(p: dict) -> str:
     cell_cell = [c for _, c in p["cells"]] + p["spots"]
     if any(c.get("net") == "cellular" for c in cell_cell):
         lines.append("📱 ზოგან ტელეფონი Wi-Fi-დან მობილურ ინტერნეტზე გადავიდა — იქ Wi-Fi საერთოდ არ წვდება.")
+    adv = mesh_advice(v)
+    if adv["need_router"]:
+        lines.append("📡 რუკაზე მონიშნე, სად დგას როუტერი („📡 როუტერი“ ღილაკი) — მაშინ გეტყვი, სად დადგა mesh / repeater.")
+    for g in adv["mesh"]:
+        lines.append(f"📶 **mesh / repeater → {g['at']}** — დაფარავს: {', '.join(g['for'])}"
+                     + ("" if g["measured"] else f" (ეს უჯრა ჯერ გაზომე: იქ სიგნალი კარგი უნდა იყოს)"))
+    if adv["move_router"]:
+        lines.append(f"↔️ როუტერი სახლის კიდეშია — თუ შესაძლებელია, გადაიტანე **{adv['move_router']}**-ის ახლოს (გაზომილი სახლის შუა).")
     if not dead and not weak:
         lines.append("✅ მკვდარი ზონა ვერ ვიპოვე — ყველგან, სადაც გაზომე, Wi-Fi ნორმალურია.")
     else:

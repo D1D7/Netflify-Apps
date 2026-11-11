@@ -564,6 +564,8 @@ const QUICK = [
   ["sparkle", "green", "ქსელის ქულა", "/score"],
   ["radar", "blue", "Wi-Fi არხები", "/wifiscan"],
   ["radar", "violet", "Wi-Fi ოთახებში", "/rooms"],
+  ["alert", "red", "Wi-Fi გაწყვეტები", "/wifidrops"],
+  ["shield", "red", "ყალბი Wi-Fi", "/eviltwin"],
   ["pulse", "amber", "Bufferbloat", "/bufferbloat"],
   ["network", "violet", "სერვისები", "/services"],
   ["shield", "green", "DNS ბლოკი", "/dns"],
@@ -882,7 +884,7 @@ async function loadRooms(highlight = "") {
 
 // ---------------------------------------------------------------- Wi-Fi dead zones (grid map + walk mode)
 
-const dz = { map: null, busy: false, walk: null };
+const dz = { map: null, busy: false, walk: null, routerMode: false, advice: null };
 const netType = () => navigator.connection?.type || "";  // Android Chrome: "wifi" / "cellular"
 
 // one ping to this PC with a time limit; null = lost
@@ -928,7 +930,10 @@ function renderDz() {
       b.dataset.r = r; b.dataset.c = c;
       b.innerHTML = `<span class="dz-name">${dzCellName(r, c)}</span><span class="dz-val">${cell ? (cell.class === "dead" ? "☠️" : cell.down != null ? Math.round(cell.down) : "·") : ""}</span>`;
       b.title = cell ? `${dzCellName(r, c)}: ${cell.down != null ? `${Math.round(cell.down)} Mbps` : "—"} · ping ${cell.ping != null ? Math.round(cell.ping) : "—"} ms · loss ${cell.loss ?? 0}%` : dzCellName(r, c);
-      b.addEventListener("click", () => dzMeasureCell(r, c, b));
+      if (m.router === `${r},${c}`) { b.classList.add("is-router"); b.querySelector(".dz-val").textContent = "📡"; }
+      const meshAt = (dz.advice?.mesh || []).find((g) => g.at === dzCellName(r, c));
+      if (meshAt) { b.classList.add("is-mesh"); b.title += ` · mesh აქ (${meshAt.for.join(", ")})`; }
+      b.addEventListener("click", () => (dz.routerMode ? dzSetRouter(r, c) : dzMeasureCell(r, c, b)));
       grid.appendChild(b);
     }
   }
@@ -945,6 +950,10 @@ function renderDz() {
   if (weak.length) line("weak", `🟠 სუსტი: ${weak.join(", ")}`);
   if (spots.length) line("weak", `📍 მონიშნული ცუდი ადგილები: ${spots.join(", ")}`);
   if (Object.keys(m.cells).length && !dead.length && !weak.length && !spots.length) line("ok", "✅ მკვდარი ზონა ჯერ არ ჩანს");
+  const adv = dz.advice || {};
+  if (adv.need_router) line("note", "📡 მონიშნე, სად დგას როუტერი („📡 როუტერი“, მერე უჯრა) — გეტყვი, სად დადგა mesh.");
+  for (const g of adv.mesh || []) line("mesh", `📶 mesh / repeater → ${g.at} (დაფარავს ${g.for.join(", ")})${g.measured ? "" : " — ეს უჯრა ჯერ გაზომე"}`);
+  if (adv.move_router) line("note", `↔️ როუტერი კიდეშია — სჯობს ${adv.move_router}-ის ახლოს`);
   if (dead.length || weak.length || spots.length) {
     const more = el("button", "link-btn");
     more.type = "button";
@@ -955,14 +964,21 @@ function renderDz() {
 }
 
 async function loadDz() {
-  try { dz.map = await apiJson("/api/wifimap"); renderDz(); } catch { /* ignore */ }
+  try { const m = await apiJson("/api/wifimap"); dz.advice = m.advice; dz.map = m; renderDz(); } catch { /* ignore */ }
 }
 
 async function dzPost(what, json) {
   const r = await apiJson(`/api/wifimap/${what}`, { method: "POST", json });
   dz.map = r.map;
+  dz.advice = r.advice;
   renderDz();
   return r.result;
+}
+
+async function dzSetRouter(r, c) {
+  dz.routerMode = false;
+  $("#dz-router").classList.remove("on");
+  try { await dzPost("router", { row: r, col: c }); toast(`📡 როუტერი: ${dzCellName(r, c)}`); } catch (e) { toast(e.message); }
 }
 
 async function dzMeasureCell(r, c, btn) {
@@ -1071,6 +1087,10 @@ function renderHw(d) {
 
   const disks = $("#hw-disks");
   disks.replaceChildren();
+  const pick = $("#ss-disk");
+  const was = pick.value;
+  pick.replaceChildren(...d.disks.map((x) => Object.assign(el("option"), { value: x.id, textContent: `${x.id}: ${x.name} (${x.size_gb} GB)` })));
+  if (was) pick.value = was;
   for (const x of d.disks) {
     const s = x.details || {};
     const card = el("div", `hw-card s-${x.status}`);
@@ -1410,6 +1430,108 @@ function renderConsole(data) {
     }
     list.appendChild(row);
   }
+}
+
+// ---------------------------------------------------------------- temperatures
+
+let tpTimer = null;
+const TP_NAMES = { cpu: "CPU", gpu: "GPU", disk: "დისკი" };
+
+function renderTemps(r) {
+  const card = $("#tp-card");
+  const head = r.summary || {};
+  const lv = r.levels || {};
+  const th = r.thresholds || {};
+  const hist = r.history || [];
+  const tiles = ["cpu", "gpu", "disk"].map((k, i) => {
+    const v = head[k];
+    const col = i + 1;
+    return `<div class="tp-tile l-${lv[k] || "none"}"><span>${TP_NAMES[k]}</span><b>${v == null ? "—" : `${Math.round(v)}°C`}</b>
+      ${siSpark(hist.map((h) => h[col]), Math.max(100, ...(th[k] || [0, 100])))}<small>${th[k] ? `${th[k][0]}° / ${th[k][1]}°` : ""}</small></div>`;
+  }).join("");
+  const cores = (r.sensors || []).filter((s) => s.kind === "cpu" && /core/i.test(s.name) && !/max|average/i.test(s.name));
+  card.innerHTML = `<div class="tp-tiles">${tiles}</div>
+    ${cores.length ? `<div class="tp-cores">${cores.slice(0, 16).map((s) => `<span class="l-${s.value >= (th.cpu || [75, 90])[1] ? "red" : s.value >= (th.cpu || [75, 90])[0] ? "yellow" : "green"}">${esc(s.name.replace(/CPU /, ""))} ${Math.round(s.value)}°</span>`).join("")}</div>` : ""}
+    <div class="tp-src"></div><div class="tp-msg"></div>
+    <details class="tp-th"><summary>ზღვრები (ყვითელი / წითელი, °C)</summary><div class="tp-th-rows"></div>
+      <button type="button" class="btn" id="tp-save">შენახვა</button></details>`;
+  card.querySelector(".tp-src").textContent = r.sources?.length ? `წყარო: ${r.sources.join(", ")}` : "";
+  card.querySelector(".tp-msg").textContent = r.message || "";
+  const rows = card.querySelector(".tp-th-rows");
+  for (const k of ["cpu", "gpu", "disk"]) {
+    const row = el("label", "tp-th-row", `<span>${TP_NAMES[k]}</span><input type="number" min="20" max="120" data-k="${k}" data-i="0"><input type="number" min="20" max="120" data-k="${k}" data-i="1">`);
+    row.querySelectorAll("input").forEach((inp) => { inp.value = (th[k] || [])[Number(inp.dataset.i)] ?? ""; });
+    rows.appendChild(row);
+  }
+  card.querySelector("#tp-save").addEventListener("click", async () => {
+    const body = {};
+    card.querySelectorAll(".tp-th-rows input").forEach((inp) => { (body[inp.dataset.k] ||= [0, 0])[Number(inp.dataset.i)] = Number(inp.value); });
+    try { await apiJson("/api/temps/thresholds", { method: "POST", json: body }); toast("შენახულია"); loadTemps(); } catch (e) { toast(e.message); }
+  });
+}
+
+async function loadTemps() {
+  clearTimeout(tpTimer);
+  const open = $("#tp-card").querySelector("details[open]");  // do not close the editor while typing
+  if (!open) {
+    try { renderTemps(await apiJson("/api/temps")); } catch (err) {
+      if (err.message !== "unauthorized") $("#tp-card").textContent = `⚠️ ${err.message}`;
+    }
+  }
+  if (state.view === "hw" && !document.hidden) tpTimer = setTimeout(loadTemps, 5000);
+}
+
+// ---------------------------------------------------------------- disk surface scan
+
+let ssTimer = null;
+const SS_WORD = { ok: ["s-ok", "ცუდი სექტორი არ არის"], warn: ["s-warn", "ნელი ადგილებია"], bad: ["s-bad", "ცუდი სექტორებია"],
+  stopped: ["s-warn", "შეჩერდა"], aborted: ["s-bad", "შეწყდა"], declined: ["s-warn", "UAC უარყოფილია"],
+  waiting_uac: ["", "ელოდება UAC-ს"], running: ["", "მიმდინარეობს"] };
+
+function renderSurf(r) {
+  const st = r.status || {};
+  const s = st.status;
+  const running = s === "running" || s === "waiting_uac";
+  $("#ss-start").disabled = running;
+  $("#ss-stop").hidden = s !== "running";
+  $("#ss-run").hidden = s !== "running";
+  const badge = $("#ss-badge");
+  badge.hidden = !s;
+  if (s) { const [cls, word] = SS_WORD[s] || ["", s]; badge.className = `hw-badge ${cls}`; badge.textContent = word; }
+  const fmtEta = (x) => (x >= 3600 ? `${Math.floor(x / 3600)} სთ ${Math.floor((x % 3600) / 60)} წთ` : `${Math.floor(x / 60)} წთ ${x % 60} წმ`);
+  if (s === "running") {
+    $("#ss-run .hw-bar span").style.width = `${st.progress || 0}%`;
+    $("#ss-line").textContent = `${(st.progress || 0).toFixed(1)}% · ${st.speed_mbps || 0} MB/s · დარჩა ~${fmtEta(st.eta_s || 0)} · ცუდი: ${st.bad_count || 0} · ნელი: ${(st.slow || 0) + (st.very_slow || 0)}`;
+  }
+  const map = $("#ss-map");
+  map.replaceChildren();
+  if (st.segments) {
+    for (const ch of st.segments) map.appendChild(el("span", `ss-c c${ch}`));
+    $("#ss-legend").hidden = false;
+  }
+  const res = $("#ss-result");
+  res.replaceChildren();
+  const line = (txt) => res.appendChild(Object.assign(el("div", "mt-res-line"), { textContent: txt }));
+  if (s === "waiting_uac") line("🖥 კომპიუტერზე Windows ითხოვს ადმინის დადასტურებას — დააჭირე „Yes“.");
+  if (s === "declined") line("UAC არ დადასტურდა — სკანი არ დაწყებულა.");
+  if (["ok", "warn", "bad", "stopped", "aborted"].includes(s)) {
+    line(`${st.label || ""} · წაკითხულია ${(st.progress || 0).toFixed(1)}% · ${st.speed_mbps || 0} MB/s · ${fmtEta(st.elapsed_s || 0)}`);
+    if (st.bad_count) line(`🔴 ცუდი სექტორები: ${st.bad_count} (LBA ${(st.bad_sectors || []).slice(0, 8).join(", ")}${st.bad_count > 8 ? "…" : ""}) — ახლავე გააკეთე მნიშვნელოვანი ფაილების backup.`);
+    else if (st.very_slow) line(`🟠 ძალიან ნელი ბლოკები: ${st.very_slow} — ხშირად სუსტი სექტორის პირველი ნიშანია.`);
+    else if (s === "ok") line("✅ ყველა სექტორი იკითხება, ნელი ადგილი არ არის.");
+    if (st.error) line(`⚠️ ${st.error}`);
+  }
+  const hist = Object.values(r.history || {}).flat().sort((a, b) => (a.finished < b.finished ? 1 : -1)).slice(0, 4);
+  if (hist.length > 1 || (hist.length && !["ok", "warn", "bad"].includes(s))) {
+    line("ისტორია:");
+    for (const h of hist) line(`• ${h.finished?.replace("T", " ").slice(0, 16)} · ${h.label || ""} · ${(SS_WORD[h.status] || ["", h.status])[1]}${h.bad_count ? ` (${h.bad_count})` : ""}`);
+  }
+  clearTimeout(ssTimer);
+  if (running && state.view === "hw") ssTimer = setTimeout(loadSurf, 1500);
+}
+
+async function loadSurf() {
+  try { renderSurf(await apiJson("/api/surfscan")); } catch { /* ignore */ }
 }
 
 async function loadOverview() {
@@ -1914,7 +2036,7 @@ function switchView(name) {
   }
   if (name === "chat") scrollDown();
   if (name === "term") openTerminal();
-  if (name === "hw") { loadHw(); loadMemtest(); loadSysinfo(); }
+  if (name === "hw") { loadHw(); loadMemtest(); loadSysinfo(); loadTemps(); loadSurf(); }
   else clearTimeout(si.timer);
   if (name === "live") startLive();
   else stopLive();
@@ -2338,6 +2460,26 @@ async function init() {
   $("#map-refresh").addEventListener("click", () => loadMap(true));
   $("#con-refresh").addEventListener("click", () => loadConsole());
   $("#hw-refresh").addEventListener("click", () => { loadHw(true); loadSysinfo(true); });
+  $("#ss-start").addEventListener("click", () => {
+    const opt = $("#ss-disk").selectedOptions[0];
+    if (!opt) return;
+    if (!confirm("კომპიუტერზე Windows ადმინის დადასტურებას (UAC) ითხოვს. დისკი მხოლოდ წაიკითხება. დავიწყო?")) return;
+    apiJson("/api/surfscan/start", { method: "POST", json: { disk: Number(opt.value), label: opt.textContent } })
+      .then(() => { toast("🖥 კომპიუტერზე დააჭირე „Yes“ (UAC)"); setTimeout(loadSurf, 800); }).catch((e) => toast(e.message));
+  });
+  $("#ss-stop").addEventListener("click", () => apiJson("/api/surfscan/stop", { method: "POST", json: {} }).then(() => setTimeout(loadSurf, 800)).catch((e) => toast(e.message)));
+  $("#ss-chkdsk").addEventListener("click", () => {
+    if (!confirm("chkdsk C: /scan — კომპიუტერზე UAC-ის დადასტურება საჭიროა. გავუშვა?")) return;
+    apiJson("/api/surfscan/chkdsk", { method: "POST", json: { drive: "C" } }).then(() => {
+      toast("🖥 კომპიუტერზე დააჭირე „Yes“ (UAC)");
+      const poll = async (n) => {
+        const r = await apiJson("/api/surfscan?chkdsk=C").catch(() => ({}));
+        if (r.text) { const pre = $("#ss-chk"); pre.hidden = false; pre.textContent = r.text.trim().slice(-2500); return; }
+        if (n > 0 && state.view === "hw") setTimeout(() => poll(n - 1), 4000);
+      };
+      poll(60);
+    }).catch((e) => toast(e.message));
+  });
   const mtAction = (action, json = {}) => apiJson(`/api/memtest/${action}`, { method: "POST", json })
     .then(() => setTimeout(loadMemtest, 400)).catch((e) => toast(e.message));
   $("#mt-quick").addEventListener("click", () => mtAction("start", { mode: "quick" }));
@@ -2359,6 +2501,11 @@ async function init() {
   $("#dz-rows").addEventListener("change", dzSize);
   $("#dz-clear").addEventListener("click", () => { if (confirm("გავასუფთავო მკვდარი ზონების რუკა?")) dzPost("clear", {}).catch(() => {}); });
   $("#dz-walk-go").addEventListener("click", () => (dz.walk ? dzWalkStop() : dzWalkStart()));
+  $("#dz-router").addEventListener("click", (e) => {
+    dz.routerMode = !dz.routerMode;
+    e.currentTarget.classList.toggle("on", dz.routerMode);
+    if (dz.routerMode) toast("დააჭირე უჯრას, სადაც როუტერი დგას");
+  });
   $("#dz-mark").addEventListener("click", dzMark);
   $("#rooms-form").addEventListener("submit", (e) => {
     e.preventDefault();

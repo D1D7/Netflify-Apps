@@ -108,3 +108,33 @@ def test_api(api):
     assert c.post("/api/wifimap/clear", json={}, headers=H).json()["map"]["cells"] == {}
     assert c.post("/api/wifimap/nope", json={}, headers=H).status_code == 404
     assert c.post("/api/wifimap/clear", json={}).status_code == 403  # CSRF header
+
+
+def test_mesh_advice(st):
+    good = {"down": 200, "ping": 5, "loss": 0}
+    dz.save_cell(st, 0, 0, good)                                 # A1 next to the router
+    dz.save_cell(st, 0, 2, {"down": 60, "ping": 20, "loss": 0})  # C1 still fine
+    dz.save_cell(st, 0, 4, {"down": 25, "ping": 40, "loss": 0})  # E1 weak-ish but OK (> 20)
+    dz.save_cell(st, 0, 5, {"down": 2, "ping": 90, "loss": 40})  # F1 dead
+    dz.save_cell(st, 3, 5, {"down": 3, "ping": 90, "loss": 35})  # F4 dead, nothing measured on the way
+    assert dz.mesh_advice(dz.load(st))["need_router"]
+    assert "მონიშნე, სად დგას როუტერი" in dz.format_deadzones(dz.problems(st))
+    dz.set_router(st, 0, 0)
+    adv = dz.mesh_advice(dz.load(st))
+    by_target = {t: g for g in adv["mesh"] for t in g["for"]}
+    assert by_target["F1"]["at"] == "E1" and by_target["F1"]["measured"]  # the good square closest to the dead one
+    assert not by_target["F4"]["measured"]                                  # suggested middle of the way, to measure first
+    text = dz.format_deadzones(dz.problems(st))
+    assert "mesh / repeater → E1" in text
+    dz.set_router(st, 0, 0)  # the same square again clears it
+    assert dz.load(st)["router"] is None
+    with pytest.raises(Exception):
+        dz.set_router(st, 9, 9)
+
+
+def test_router_at_the_edge(st):
+    for r in range(4):
+        for c in range(6):
+            dz.save_cell(st, r, c, {"down": 200 if c < 3 else 3, "ping": 5, "loss": 0})
+    dz.set_router(st, 0, 0)
+    assert dz.mesh_advice(dz.load(st))["move_router"] in {"C2", "C3", "D2", "D3"}

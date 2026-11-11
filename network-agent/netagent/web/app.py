@@ -532,6 +532,61 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
         log_event(settings.audit_log_path, user=request.state.who, tool=f"console_{action}", args={"port": port}, ok=True)
         return r.as_dict()
 
+    @app.get("/api/temps")
+    async def temps_api():
+        from ..features import temps
+
+        r = await asyncio.to_thread(temps.report, services.state)
+        return {**r, "history": r.get("history", [])[-180:]}
+
+    @app.post("/api/temps/thresholds")
+    async def temps_thresholds(request: Request):
+        from ..features import temps
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        try:
+            return {"thresholds": await asyncio.to_thread(temps.set_thresholds, services.state, await _json(request))}
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/api/surfscan")
+    async def surfscan_status(chkdsk: str = ""):
+        from ..features import surfscan
+
+        if chkdsk:
+            return {"drive": chkdsk[:1].upper(), "text": surfscan.chkdsk_result(chkdsk[:1])}
+        st = surfscan.read_status()
+        if st.get("status") == "running" and not surfscan.running():
+            st = {**st, "status": "stopped", "error": "სკანის პროცესი მოულოდნელად დასრულდა"}
+        await asyncio.to_thread(surfscan.remember, services.state, st)
+        return {"status": st, "history": services.state.get(surfscan.HISTORY_KEY) or {}}
+
+    @app.post("/api/surfscan/{action}")
+    async def surfscan_action(action: str, request: Request):
+        from ..features import surfscan
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        try:
+            if action == "start":
+                r = surfscan.start_scan(int(body.get("disk", 0)), str(body.get("label", ""))[:60])
+            elif action == "stop":
+                r = {"stopping": surfscan.stop_scan()}
+            elif action == "chkdsk":
+                r = await asyncio.to_thread(surfscan.start_chkdsk, str(body.get("drive", "C")))
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except (CommandError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"surfscan_{action}", args=body, ok=True)
+        return r
+
     @app.get("/api/memtest")
     async def memtest_status():
         from ..features import memtest
@@ -567,9 +622,10 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
     # -- Wi-Fi dead zones (grid map + walk spots) --------------------------------------------------
     @app.get("/api/wifimap")
     async def wifimap_get():
-        from ..features.deadzones import load
+        from ..features.deadzones import load, mesh_advice
 
-        return await asyncio.to_thread(load, services.state)
+        m = await asyncio.to_thread(load, services.state)
+        return {**m, "advice": mesh_advice(m)}
 
     @app.post("/api/wifimap/{what}")
     async def wifimap_post(what: str, request: Request):
@@ -582,6 +638,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
                 m = await asyncio.to_thread(dz.save_cell, services.state, body.get("row"), body.get("col"), body)
             elif what == "spot":
                 m = await asyncio.to_thread(dz.save_spot, services.state, body.get("name", ""), body)
+            elif what == "router":
+                m = await asyncio.to_thread(dz.set_router, services.state, body.get("row"), body.get("col"))
             elif what == "size":
                 m = await asyncio.to_thread(dz.set_size, services.state, body.get("cols"), body.get("rows"))
             elif what == "clear":
@@ -592,7 +650,8 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
                 return JSONResponse({"error": "not found"}, status_code=404)
         except CommandError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
-        return {"ok": True, "result": m, "map": await asyncio.to_thread(dz.load, services.state)}
+        cur = await asyncio.to_thread(dz.load, services.state)
+        return {"ok": True, "result": m, "map": cur, "advice": dz.mesh_advice(cur)}
 
     @app.get("/api/topology")
     async def topology_map(refresh: int = 0):

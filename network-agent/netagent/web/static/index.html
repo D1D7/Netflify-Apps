@@ -179,6 +179,7 @@
         <div id="dz-grid-pane">
           <p class="rooms-hint">სახლი წარმოიდგინე ბადედ (ზემოდან ხედი). დადექი ადგილზე და დააჭირე შესაბამის უჯრას — 5 წამიანი ტესტი.</p>
           <div class="dz-size">ბადე: <select id="dz-cols" aria-label="სვეტები"></select> × <select id="dz-rows" aria-label="რიგები"></select>
+            <button type="button" class="link-btn" id="dz-router">📡 როუტერი</button>
             <button type="button" class="link-btn" id="dz-clear">გასუფთავება</button></div>
           <div class="dz-grid" id="dz-grid"></div>
           <div class="dz-legend"><span class="lg-good">კარგი</span><span class="lg-ok">ნორმა</span><span class="lg-weak">სუსტი</span><span class="lg-dead">მკვდარი</span><span class="lg-none">არ გაზომილა</span></div>
@@ -362,10 +363,26 @@
         <div class="hw-overall" id="hw-overall">…</div>
         <button id="hw-refresh" class="round-btn hw-refresh" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
       </div>
+      <h2 class="section">ტემპერატურები</h2>
+      <div class="hw-card tp-card" id="tp-card"><div class="skeleton"></div></div>
       <h2 class="section">სისტემა</h2>
       <div id="si-box" class="hw-list"><div class="skeleton"></div></div>
       <h2 class="section">დისკები</h2>
       <div id="hw-disks" class="hw-list"><div class="skeleton"></div></div>
+      <div class="hw-card ss-card" id="ss-card">
+        <div class="mt-head"><b>🔬 დისკის ზედაპირის სკანი</b><span class="hw-badge" id="ss-badge" hidden></span></div>
+        <p class="mt-hint">ყოველი სექტორი იკითხება და ჩანს ცუდი (წაუკითხავი) და ნელი ადგილები. მხოლოდ კითხვა — დისკზე არაფერი იწერება. კომპიუტერზე Windows ერთხელ ითხოვს ადმინის დადასტურებას (UAC).</p>
+        <div class="ss-pick"><select id="ss-disk" aria-label="დისკი"></select>
+          <button type="button" class="btn primary" id="ss-start">სკანის დაწყება</button>
+          <button type="button" class="btn" id="ss-stop" hidden>შეჩერება</button></div>
+        <div class="mt-run" id="ss-run" hidden><div class="hw-bar mt-bar"><span></span></div><div class="mt-line" id="ss-line"></div></div>
+        <div class="ss-map" id="ss-map"></div>
+        <div class="dz-legend ss-legend" id="ss-legend" hidden><span class="lg-ok">ნორმა</span><span class="lg-weak">ნელი</span><span class="lg-dead">ძალიან ნელი</span><span class="lg-bad">ცუდი სექტორი</span><span class="lg-none">ჯერ არა</span></div>
+        <div class="mt-result" id="ss-result"></div>
+        <details class="mt-reboot"><summary>chkdsk /scan (ფაილური სისტემის შემოწმება)</summary>
+          <p>Windows-ის ჩაშენებული შემოწმება ჩართულ დისკზე, გამოსწორების გარეშე. ესეც UAC-ს ითხოვს.</p>
+          <button type="button" class="btn" id="ss-chkdsk">chkdsk C: /scan</button><pre class="ss-chk" id="ss-chk" hidden></pre></details>
+      </div>
       <h2 class="section">ოპერატიული მეხსიერება (RAM)</h2>
       <div id="hw-ram" class="hw-list"><div class="skeleton"></div></div>
       <div class="hw-card mt-card" id="mt-card">
