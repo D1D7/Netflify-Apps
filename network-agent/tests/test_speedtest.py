@@ -128,3 +128,41 @@ def test_ping_unmeasurable():
     r = isp.measure_speed(link, clock, rtt=lambda: None)
     assert r["ping_ms"] is None and r["jitter_ms"] == 0.0
     assert "ვერ გაიზომა" in isp.format_speed(r)
+
+
+def test_upload_failure_keeps_download_and_ping():
+    """A timeout in the upload part used to throw the whole measurement away (seen in the real log)."""
+    import httpx
+
+    from netagent.features import isp
+
+    class C:
+        def get(self, url, timeout=None):
+            raise httpx.ConnectError("meta down")
+
+        def stream(self, method, url):
+            class R:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+                def iter_bytes(self):
+                    for _ in range(5):
+                        yield b"x" * 1_000_000
+
+            return R()
+
+        def post(self, url, content=None):
+            raise httpx.ReadTimeout("upload stalled")
+
+    ticks = iter(range(0, 1000))
+    m = isp.measure_speed(C(), clock=lambda: next(ticks) * 0.1, rtt=lambda: 7.0)
+    assert m["down_mbps"] > 0 and m["ping_ms"] == 7.0 and m["up_mbps"] is None and m["up_error"] == "ReadTimeout"
+    text = isp.format_speed({"ts": "2026-11-11T22:35:00", **m})
+    assert "ვერ გაიზომა" in text and "None" not in text
+    st = isp.speed_stats([{"ts": "a", "down_mbps": 10.0, "up_mbps": None}, {"ts": "b", "down_mbps": 20.0, "up_mbps": 30.0}])
+    assert st["up_avg"] == 30.0 and st["down_avg"] == 15.0
+    st = isp.speed_stats([{"ts": "a", "down_mbps": 10.0, "up_mbps": None}])
+    assert st["up_avg"] is None and "—" in isp.format_speed_history(st, 7)

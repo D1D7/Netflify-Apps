@@ -8,6 +8,8 @@ sent to the provider.
 
 from __future__ import annotations
 
+import logging
+
 import csv
 import os
 import socket
@@ -21,6 +23,7 @@ from ..result import Button, CommandError, Result
 from . import env_int
 
 TARGETS = [("1.1.1.1", 443), ("8.8.8.8", 443), ("9.9.9.9", 443)]
+log = logging.getLogger("netagent.isp")
 SPEED_URL = "https://speed.cloudflare.com"
 # /meta answers 403 unless the request looks like it comes from Cloudflare's own speed page
 SPEED_HEADERS = {"User-Agent": "NetAgent", "Referer": f"{SPEED_URL}/", "Origin": SPEED_URL}
@@ -120,11 +123,23 @@ def measure_speed(c, clock=time.monotonic, rtt=None) -> dict:
         r = c.post(f"{SPEED_URL}/__up", content=body)
         return max(clock() - t0 - _server_ms(r.headers) / 1000, 1e-3)
 
-    probe = UP_PROBE_BYTES * 8 / upload(UP_PROBE_BYTES)  # bits per second
-    n = int(min(max(probe / 8 * UP_TARGET_SECONDS, UP_PROBE_BYTES), UP_MAX_BYTES))
-    up = n * 8 / upload(n) / 1e6
-    return {"down_mbps": round(down, 1), "up_mbps": round(up, 1), "ping_ms": round(ping, 1) if ping is not None else None,
-            "jitter_ms": round(jitter, 1), **info}
+    up, up_error = None, ""
+    try:
+        probe = UP_PROBE_BYTES * 8 / upload(UP_PROBE_BYTES)  # bits per second
+        n = int(min(max(probe / 8 * UP_TARGET_SECONDS, UP_PROBE_BYTES), UP_MAX_BYTES))
+        up = round(n * 8 / upload(n) / 1e6, 1)
+    except Exception as exc:  # noqa: BLE001 - the download and ping are still worth keeping
+        up_error = f"{type(exc).__name__}"
+    out = {"down_mbps": round(down, 1), "up_mbps": up, "ping_ms": round(ping, 1) if ping is not None else None,
+           "jitter_ms": round(jitter, 1), **info}
+    if up_error:
+        out["up_error"] = up_error
+    return out
+
+
+def mbps(v) -> str:
+    """A speed for text: the number, or a dash when it could not be measured."""
+    return "—" if v is None else f"{v}"
 
 
 class InternetMonitor:
@@ -257,7 +272,8 @@ class InternetMonitor:
         if speeds:
             res["down_avg_mbps"] = round(statistics.mean(t["down_mbps"] for t in speeds), 1)
             res["down_min_mbps"] = min(t["down_mbps"] for t in speeds)
-            res["up_avg_mbps"] = round(statistics.mean(t["up_mbps"] for t in speeds), 1)
+            ups = [t["up_mbps"] for t in speeds if t.get("up_mbps") is not None]
+            res["up_avg_mbps"] = round(statistics.mean(ups), 1) if ups else None
         return res
 
     def chart(self, days: float, path: Path) -> Path | None:
@@ -307,8 +323,8 @@ def format_summary(r: dict) -> str:
                      + f" · packet loss {r['loss_avg_percent']}%")
     if r.get("down_avg_mbps") is not None:
         last = r["speedtests"][-1]
-        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} · ატვირთვა {r['up_avg_mbps']} Mbps")
-        lines.append(f"ბოლო ტესტი: ჩამოტვირთვა {last['down_mbps']} · ატვირთვა {last['up_mbps']} Mbps"
+        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} · ატვირთვა {mbps(r['up_avg_mbps'])} Mbps")
+        lines.append(f"ბოლო ტესტი: ჩამოტვირთვა {last['down_mbps']} · ატვირთვა {mbps(last['up_mbps'])} Mbps"
                      + (f" · {last['isp']}" if last.get("isp") else ""))
     for o in r["outages"][-8:]:
         lines.append(f"• {o['start'][5:16].replace('T', ' ')} → {o['end'][11:16]} ({_fmt_dur(o['seconds'])})")
@@ -326,7 +342,7 @@ def format_report(r: dict, plan_mbps: int = 0) -> str:
     if r["latency_avg_ms"] is not None:
         lines.append(f"საშუალო დაყოვნება: {r['latency_avg_ms']} ms, დანაკარგი: {r['loss_avg_percent']}%")
     if r.get("down_avg_mbps") is not None:
-        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} Mbps, ატვირთვა {r['up_avg_mbps']} Mbps, "
+        lines.append(f"სიჩქარე (საშუალო): ჩამოტვირთვა {r['down_avg_mbps']} Mbps, ატვირთვა {mbps(r['up_avg_mbps'])} Mbps, "
                      f"მინიმალური ჩამოტვირთვა {r['down_min_mbps']} Mbps")
         if plan_mbps:
             lines.append(f"ტარიფი: {plan_mbps} Mbps → საშუალოდ მიღებულია {round(100 * r['down_avg_mbps'] / plan_mbps)}%")
@@ -347,10 +363,12 @@ def speed_stats(tests: list[dict], plan: int = 0) -> dict:
     if not tests:
         return {"count": 0}
     down = [x["down_mbps"] for x in tests]
-    up = [x["up_mbps"] for x in tests]
+    up = [x["up_mbps"] for x in tests if x.get("up_mbps") is not None] or [None]
     res = {"count": len(tests), "down_avg": round(statistics.mean(down), 1), "down_min": min(down), "down_max": max(down),
-           "down_median": round(statistics.median(down), 1), "up_avg": round(statistics.mean(up), 1), "up_min": min(up),
-           "up_max": max(up), "first": tests[0]["ts"], "last": tests[-1]["ts"]}
+           "down_median": round(statistics.median(down), 1),
+           "up_avg": round(statistics.mean(up), 1) if up[0] is not None else None,
+           "up_min": min(up) if up[0] is not None else None, "up_max": max(up) if up[0] is not None else None,
+           "first": tests[0]["ts"], "last": tests[-1]["ts"]}
     if plan:
         res["plan"] = plan
         res["plan_pct"] = round(100 * res["down_avg"] / plan)
@@ -401,7 +419,7 @@ def format_speed_history(st: dict, days: float) -> str:
     lines = [f"📈 **სიჩქარის ისტორია — ბოლო {int(days)} დღე** ({st['count']} გაზომვა)",
              f"ჩამოტვირთვა (download): საშუალო **{st['down_avg']}** · მედიანა {st['down_median']} · მინ. {st['down_min']} · "
              f"მაქს. {st['down_max']} Mbps",
-             f"ატვირთვა (upload): საშუალო **{st['up_avg']}** · მინ. {st['up_min']} · მაქს. {st['up_max']} Mbps"]
+             f"ატვირთვა (upload): საშუალო **{mbps(st['up_avg'])}** · მინ. {mbps(st['up_min'])} · მაქს. {mbps(st['up_max'])} Mbps"]
     if st.get("plan"):
         lines.append(f"ტარიფი {st['plan']} Mbps → საშუალოდ **{st['plan_pct']}%**; ნახევარზე ნაკლები: {st['below_half']}-ჯერ")
     else:
@@ -464,7 +482,7 @@ def render_isp_pdf(s, days: float, path: Path) -> Path:
         if st["count"]:
             line(f"გაზომვები: {st['count']} ({st['first'][:16].replace('T', ' ')} — {st['last'][:16].replace('T', ' ')})")
             line(f"ჩამოტვირთვა: საშუალო {st['down_avg']} Mbps, მედიანა {st['down_median']}, მინიმუმი {st['down_min']}, მაქსიმუმი {st['down_max']}")
-            line(f"ატვირთვა: საშუალო {st['up_avg']} Mbps, მინიმუმი {st['up_min']}, მაქსიმუმი {st['up_max']}")
+            line(f"ატვირთვა: საშუალო {mbps(st['up_avg'])} Mbps, მინიმუმი {mbps(st['up_min'])}, მაქსიმუმი {mbps(st['up_max'])}")
             if plan:
                 line(f"ტარიფი: {plan} Mbps → საშუალოდ მიღებულია {st['plan_pct']}%; ტარიფის ნახევარზე ნაკლები — {st['below_half']} გაზომვა",
                      weight="bold", color="#dc2626" if st["plan_pct"] < 80 else "#059669")
@@ -472,7 +490,7 @@ def render_isp_pdf(s, days: float, path: Path) -> Path:
             y -= 0.008
             line("ყველაზე დაბალი გაზომვები:", 10, "bold")
             for x in worst:
-                line(f"• {x['ts'][:16].replace('T', ' ')} — ჩამოტვირთვა {x['down_mbps']} Mbps, ატვირთვა {x['up_mbps']} Mbps, ping {x.get('ping_ms', '—')} ms", 9)
+                line(f"• {x['ts'][:16].replace('T', ' ')} — ჩამოტვირთვა {x['down_mbps']} Mbps, ატვირთვა {mbps(x['up_mbps'])} Mbps, ping {x.get('ping_ms', '—')} ms", 9)
         else:
             line("სიჩქარის გაზომვები არ არის (/speedtest).")
         if r["outages"]:
@@ -556,21 +574,22 @@ def speedtest_cmd(s, args, user) -> Result:
     except Exception as exc:  # noqa: BLE001
         raise CommandError(f"სიჩქარის ტესტი ვერ შესრულდა ({type(exc).__name__}: {exc})") from None
     return Result(format_speed(t), buttons=[Button("🩺 რატომ ნელია?", "/diagnose ინტერნეტი ნელია")]
-                  if t["down_mbps"] and t["up_mbps"] > 3 * t["down_mbps"] else [])
+                  if t["down_mbps"] and (t["up_mbps"] or 0) > 3 * t["down_mbps"] else [])
 
 
 def format_speed(t: dict) -> str:
     jitter = t.get("jitter_ms") or 0
     lines = ["⚡ **ინტერნეტის სიჩქარე**",
              f"ჩამოტვირთვა (download): **{t['down_mbps']}** Mbps",
-             f"ატვირთვა (upload): **{t['up_mbps']}** Mbps",
+             (f"ატვირთვა (upload): **{t['up_mbps']}** Mbps" if t.get("up_mbps") is not None
+              else f"ატვირთვა (upload): ვერ გაიზომა ({t.get('up_error') or 'შეცდომა'}) — ჩამოტვირთვა და ping შენახულია"),
              (f"დაყოვნება (ping): {t['ping_ms']} ms" if t.get("ping_ms") is not None else "დაყოვნება (ping): ვერ გაიზომა")
              + (f" · რყევა ±{jitter:.0f} ms" if jitter >= 1 else "")]
     if t.get("isp"):
         lines.append(f"პროვაიდერი: {t['isp']}" + (f", {t['city']}" if t.get("city") else ""))
     if jitter >= 30:
         lines.append("⚠️ დაყოვნება არასტაბილურია: ხან სწრაფია, ხან ძალიან ნელი (ხშირად Wi-Fi-ის ხმაურია, 2.4 GHz).")
-    if t["down_mbps"] and t["up_mbps"] > 3 * t["down_mbps"]:
+    if t["down_mbps"] and (t["up_mbps"] or 0) > 3 * t["down_mbps"]:
         lines.append("⚠️ ჩამოტვირთვა ატვირთვაზე ბევრად ნელია — ჩვეულებრივ პირიქით არის. "
                      "სხვა მოწყობილობა ხომ არ ტვირთავს რამეს? ან პროვაიდერის მხარეს არის შეზღუდვა.")
     return "\n".join(lines)
@@ -618,7 +637,11 @@ def jobs(monitoring):
             m = monitor_for(monitoring.s)
             if monitoring.s.state.get("isp_outage_start"):
                 return
-            t = await asyncio.to_thread(m.speedtest)
+            try:
+                t = await asyncio.to_thread(m.speedtest)
+            except Exception as exc:  # noqa: BLE001 - a network hiccup during the test: try again next time
+                log.warning("scheduled speed test failed: %s: %s", type(exc).__name__, exc)
+                return
             low = env_int("NETAGENT_ISP_PLAN_MBPS", 0)
             if low and t["down_mbps"] < low * 0.5:
                 await monitoring.emit(Alert("isp", f"🐢 **ინტერნეტი ნელია:** ჩამოტვირთვა {t['down_mbps']} Mbps "

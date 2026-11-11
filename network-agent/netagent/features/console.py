@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import threading
 import time
 
 from ..result import Button, CommandError, Result
@@ -30,7 +29,7 @@ TRIED_KEY = "console_tried"
 SKIP_DESC = re.compile(r"bluetooth", re.I)
 # how soon a port is looked at again, by its last state (seconds): a port PuTTY holds is free again as soon as
 # PuTTY closes; a silent one costs ~10 s of probing; prompts that wait for you only need a fresh look now and then
-RETRY = {"busy": 10, "error": 10, "silent": 30, "garbage": 30, "unknown": 30, "press_return": 10,
+RETRY = {"busy": 10, "error": 10, "unsupported": 600, "silent": 30, "garbage": 30, "unknown": 30, "press_return": 10,
          "setup_dialog": 60, "autoinstall": 60, "login_user": 60, "login_password": 60, "rommon": 120, "more": 30}
 PACE = 1.0  # multiplier for every wait on the console (tests with a simulated device set it close to 0)
 
@@ -52,7 +51,8 @@ STATE_TEXT = {
     "autoinstall": "autoinstall-ს ელოდება", "login_user": "მომხმარებელს ითხოვს", "login_password": "პაროლს ითხოვს",
     "rommon": "ROMMON / bootloader რეჟიმშია (IOS არ ჩაიტვირთა)", "more": "გვერდის გადაფურცვლას ელოდება (--More--)",
     "press_return": "„Press RETURN“", "busy": "პორტი სხვა პროგრამას უჭირავს (PuTTY / Tera Term?)",
-    "error": "პორტი ვერ გაიხსნა (კაბელი გამოერთებულია?)", "unknown": "პასუხობს, მაგრამ prompt ვერ ამოვიცანი",
+    "error": "პორტი ვერ გაიხსნა (კაბელი გამოერთებულია?)",
+    "unsupported": "prompt-ზეა, მაგრამ Cisco IOS არ არის — ჯერ მხარდაჭერილი არ არის", "unknown": "პასუხობს, მაგრამ prompt ვერ ამოვიცანი",
     "silent": "არაფერს პასუხობს (სხვა სიჩქარე? კაბელი ბოლომდე არაა შესული? მოწყობილობა ჩართულია?)", "garbage": "გაუგებარი სიმბოლოები (სიჩქარე არ ემთხვევა)",
 }
 
@@ -447,7 +447,8 @@ def jobs(monitoring):
                                                     mutable=False, buttons=_buttons_for(port, p["state"])))
                 tried[port] = {"ts": now, "state": p["state"], "result": result}
             except CommandError as exc:
-                tried[port] = {"ts": now, "state": "error", "result": str(exc)}
+                unsupported = "Cisco" in str(exc)
+                tried[port] = {"ts": now, "state": "unsupported" if unsupported else "error", "result": str(exc)}
             except Exception as exc:  # noqa: BLE001 - one odd port must not stop the others
                 log.info("console %s: %s", port, exc)
                 tried[port] = {"ts": now, "state": "error", "result": str(exc)[:200]}

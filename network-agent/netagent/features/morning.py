@@ -60,7 +60,7 @@ def build(s, hours: float = 12, now: datetime | None = None, live=None) -> str:
     if tests:
         t = tests[-1]
         lines.append(f"⚡ ბოლო სიჩქარე ({t['ts'][5:16].replace('T', ' ')}): ჩამოტვირთვა (download) {t['down_mbps']} Mbps · "
-                     f"ატვირთვა (upload) {t['up_mbps']} Mbps")
+                     f"ატვირთვა (upload) {t['up_mbps'] if t.get('up_mbps') is not None else '—'} Mbps")
     bb = s.state.get("bufferbloat_tests") or []
     if bb and bb[-1].get("grade") not in {None, "?"}:
         lines.append(f"🌊 Bufferbloat (ბოლო ტესტი): {bb[-1]['grade']}")
@@ -97,9 +97,11 @@ def build(s, hours: float = 12, now: datetime | None = None, live=None) -> str:
 
     # Wi-Fi drops overnight
     try:
+        import os
+
         from . import wifidrops
 
-        if wifidrops.subprocess and __import__("os").name == "nt":
+        if os.name == "nt":
             wd = wifidrops.analyse(wifidrops.read_events(1))
             if wd["count_24h"]:
                 lines.append(f"📶 Wi-Fi გაწყდა {wd['count_24h']}-ჯერ ბოლო 24 სთ-ში — /wifidrops")

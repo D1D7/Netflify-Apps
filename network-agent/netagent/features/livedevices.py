@@ -1011,7 +1011,8 @@ class LiveEngine:
                 try:
                     self.tick()
                 except Exception:  # noqa: BLE001 - one bad round must not stop the panel
-                    log.exception("live tick failed")
+                    if not self._stop.is_set():
+                        log.exception("live tick failed")
             self._wake.wait(s["ping_interval"])
             self._wake.clear()
 
@@ -1019,7 +1020,8 @@ class LiveEngine:
         try:
             self.sweep()
         except Exception:  # noqa: BLE001
-            log.exception("live sweep failed")
+            if not self._stop.is_set():  # while closing, cancelled futures / closed pools are expected
+                log.exception("live sweep failed")
 
     def close(self) -> None:
         self._stop.set()

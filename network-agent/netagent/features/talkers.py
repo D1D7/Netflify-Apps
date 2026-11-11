@@ -5,6 +5,7 @@ Sources (any that exists):
                    destinations. MikroTik, Cisco, OpenWrt (softflowd) and most business routers can.
   SNMP switch      a managed switch in devices.yaml with an SNMP community: bytes per port + its MAC table.
                    A port with exactly one device on it = that device's traffic (wired devices).
+                   Cisco answers BRIDGE-MIB for VLAN 1 with the plain community (community@vlan for others).
 Usage is summed per device per day (31 days kept). A device using more than NETAGENT_HOG_GB_HOUR (default 5)
 GB in an hour sends one alert a day.
 
@@ -314,6 +315,7 @@ def jobs(monitoring):
     """Every minute: add the finished NetFlow minute and the switch-port deltas to today's totals; heavy users."""
     import asyncio
 
+    failed: dict[str, float] = {}  # switch -> when to try SNMP again
     last_minute = {"m": int(time.time() // 60) - 2}  # the minute in progress at startup is counted too
     hog_gb = env_int("NETAGENT_HOG_GB_HOUR", 5)
 
@@ -329,10 +331,19 @@ def jobs(monitoring):
                 per[k][1] += up
         last_minute["m"] = now_min - 1
         try:
-            for name, host, comm in await asyncio.to_thread(snmp_switches, s.inventory()):
+            switches = await asyncio.to_thread(snmp_switches, s.inventory())
+        except Exception as exc:  # noqa: BLE001 - no inventory: no switches
+            log.info("switch list: %s", exc)
+            switches = []
+        for name, host, comm in switches:
+            if time.time() < failed.get(name, 0):
+                continue
+            try:
                 await asyncio.to_thread(PORTS.sample, name, host, comm)
-        except Exception as exc:  # noqa: BLE001 - one unreachable switch must not stop the rest
-            log.info("switch counters: %s", exc)
+                failed.pop(name, None)
+            except Exception as exc:  # noqa: BLE001 - one silent switch must not stop the others
+                failed[name] = time.time() + 600  # try it again in 10 minutes, not with a timeout every minute
+                log.info("switch counters %s: %s", name, exc)
         for k, (dn, up) in PORTS.take_deltas().items():
             per[k][0] += dn
             per[k][1] += up

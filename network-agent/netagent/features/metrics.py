@@ -55,7 +55,8 @@ def render(s) -> str:
     tests = s.state.get("isp_speedtests") or []
     if tests:
         metric("internet_download_mbps", "Last speed test download", "gauge", [({}, tests[-1]["down_mbps"])])
-        metric("internet_upload_mbps", "Last speed test upload", "gauge", [({}, tests[-1]["up_mbps"])])
+        if tests[-1].get("up_mbps") is not None:
+            metric("internet_upload_mbps", "Last speed test upload", "gauge", [({}, tests[-1]["up_mbps"])])
 
     from .ifstats import TRACKER, utilization
 

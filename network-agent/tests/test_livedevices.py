@@ -585,3 +585,20 @@ def test_switching_back_remembers_devices(tmp_path):
     e.sweep()
     assert ROUTER in rows(e) and not rows(e)[ROUTER]["new"]               # back on Wi-Fi: known, not "new"
     assert all(ev["event"] != "new" for ev in e.snapshot()["events"])
+
+
+def test_close_during_a_sweep_logs_nothing(tmp_path, caplog):
+    """Stopping the server while a sweep runs used to log 'live sweep failed' with a CancelledError traceback."""
+    import logging
+
+    net = FakeNet(pings={ROUTER: 1.0}, arps={ROUTER: "28:5b:0c:56:da:2e"})
+    e = engine(tmp_path, net)
+    e.close()
+
+    def boom():
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    e.sweep = boom
+    with caplog.at_level(logging.ERROR):
+        e._safe_sweep()  # noqa: SLF001
+    assert "live sweep failed" not in caplog.text

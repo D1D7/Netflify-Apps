@@ -229,7 +229,7 @@ def format_deadzones(p: dict) -> str:
         lines.append("📡 რუკაზე მონიშნე, სად დგას როუტერი („📡 როუტერი“ ღილაკი) — მაშინ გეტყვი, სად დადგა mesh / repeater.")
     for g in adv["mesh"]:
         lines.append(f"📶 **mesh / repeater → {g['at']}** — დაფარავს: {', '.join(g['for'])}"
-                     + ("" if g["measured"] else f" (ეს უჯრა ჯერ გაზომე: იქ სიგნალი კარგი უნდა იყოს)"))
+                     + ("" if g["measured"] else " (ეს უჯრა ჯერ გაზომე: იქ სიგნალი კარგი უნდა იყოს)"))
     if adv["move_router"]:
         lines.append(f"↔️ როუტერი სახლის კიდეშია — თუ შესაძლებელია, გადაიტანე **{adv['move_router']}**-ის ახლოს (გაზომილი სახლის შუა).")
     if not dead and not weak:

@@ -150,3 +150,22 @@ def test_command_periods(stats, tmp_path):
     s = NS(state=StateStore(tmp_path / "s.json"))
     assert "დღეს" in talkers.bandwidth_cmd(s, ["today"], "app:admin").text
     assert "ბოლო 15 წთ" in talkers.bandwidth_cmd(s, ["nonsense"], "app:admin").text
+
+
+def test_one_silent_switch_does_not_stop_the_others(stats, tmp_path, monkeypatch):
+    st = StateStore(tmp_path / "s.json")
+    monkeypatch.setattr(talkers, "live_names", lambda: {})
+    monkeypatch.setattr(talkers, "snmp_switches", lambda inv: [("SW-dead", "10.0.0.9", "public"), ("SW1", "10.0.0.2", "public")])
+    calls = []
+
+    def sample(name, host, comm, now=None):
+        calls.append(name)
+        if name == "SW-dead":
+            raise TimeoutError("no SNMP answer")
+
+    monkeypatch.setattr(talkers.PORTS, "sample", sample)
+    (_, _, _, tick), = talkers.jobs(NS(s=NS(state=st, inventory=lambda: None), emit=None))
+    asyncio.run(tick())
+    assert calls == ["SW-dead", "SW1"]
+    asyncio.run(tick())
+    assert calls == ["SW-dead", "SW1", "SW1"]  # the silent one waits 10 minutes

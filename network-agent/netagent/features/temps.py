@@ -14,7 +14,6 @@ Thresholds (yellow / red) per kind are editable in the app; a red value seen twi
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re

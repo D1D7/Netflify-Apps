@@ -358,7 +358,7 @@ def surfscan_cmd(s, args, user) -> Result:
     if sub == "start":
         disk = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
         start_scan(disk, f"დისკი {disk}")
-        return Result(f"🔬 კომპიუტერზე Windows ადმინის დადასტურებას ითხოვს (UAC) — დააჭირე „Yes“, სკანი მაშინვე დაიწყება. "
+        return Result("🔬 კომპიუტერზე Windows ადმინის დადასტურებას ითხოვს (UAC) — დააჭირე „Yes“, სკანი მაშინვე დაიწყება. "
                       "დისკი მხოლოდ იკითხება, არაფერი იწერება.", buttons=[Button("📊 სტატუსი", "/surfscan")])
     if sub == "stop":
         return Result("⏹ ვაჩერებ..." if stop_scan() else "სკანი არ მიმდინარეობს.")
