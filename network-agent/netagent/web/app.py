@@ -491,6 +491,47 @@ def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> 
             _hw_cache.update(at=_time.monotonic(), data=data)
         return _hw_cache["data"]
 
+    @app.get("/api/sysinfo")
+    async def sysinfo_api(live: int = 0, refresh: int = 0):
+        from ..features import sysinfo
+
+        if live:  # the 2-second refresh: only the moving numbers
+            snap = sysinfo.sampler().snapshot()
+            return {"live": snap["now"], "history": snap["history"][-1:]}
+        return await asyncio.to_thread(sysinfo.info, bool(refresh))
+
+    # -- console cable (COM ports) -----------------------------------------------------------------
+    @app.get("/api/console")
+    async def console_list():
+        from ..features import console
+
+        rows = await asyncio.to_thread(console.scan, services)
+        tried = services.state.get(console.TRIED_KEY) or {}
+        for r in rows:
+            t = tried.get(r["port"].upper()) or {}
+            r["state"], r["result"] = t.get("state", ""), t.get("result", "")
+            r["state_text"] = console.STATE_TEXT.get(r["state"], "")
+        return {"ports": rows}
+
+    @app.post("/api/console")
+    async def console_action(request: Request):
+        from ..features import console
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        body = await _json(request)
+        action, port = str(body.get("action", "probe")), str(body.get("port", ""))[:16]
+        if action not in {"probe", "add", "login", "skipsetup"} or not re.fullmatch(r"(COM\d{1,3}|/dev/tty[\w.]+)", port, re.I):
+            return JSONResponse({"error": "bad request"}, status_code=400)
+        if action != "probe" and is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        try:
+            r = await asyncio.to_thread(console.console_cmd, services, [action, port], request.state.who)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"console_{action}", args={"port": port}, ok=True)
+        return r.as_dict()
+
     @app.get("/api/memtest")
     async def memtest_status():
         from ..features import memtest

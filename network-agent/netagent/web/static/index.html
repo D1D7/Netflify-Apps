@@ -195,6 +195,13 @@
         <div class="dz-summary" id="dz-summary"></div>
       </div>
 
+      <div class="map-card con-card pane-hide" id="con-card">
+        <div class="map-head"><span><svg class="icon"><use href="#i-terminal"/></svg>Console კაბელი (COM)</span>
+          <button type="button" id="con-refresh" class="link-btn">განახლება<svg class="icon"><use href="#i-refresh"/></svg></button></div>
+        <div id="con-list" class="con-list"></div>
+        <div id="con-out" class="con-out md" hidden></div>
+      </div>
+
       <div class="map-card pane-hide" id="map-card">
         <div class="map-head">
           <span><svg class="icon"><use href="#i-network"/></svg>ქსელის რუკა</span>
@@ -355,6 +362,8 @@
         <div class="hw-overall" id="hw-overall">…</div>
         <button id="hw-refresh" class="round-btn hw-refresh" type="button" aria-label="განახლება"><svg class="icon"><use href="#i-refresh"/></svg></button>
       </div>
+      <h2 class="section">სისტემა</h2>
+      <div id="si-box" class="hw-list"><div class="skeleton"></div></div>
       <h2 class="section">დისკები</h2>
       <div id="hw-disks" class="hw-list"><div class="skeleton"></div></div>
       <h2 class="section">ოპერატიული მეხსიერება (RAM)</h2>
@@ -401,7 +410,6 @@
       <button type="button" data-view="dash"><span class="tab-ico"><svg class="icon"><use href="#i-network"/></svg><span class="badge" id="tab-badge" hidden></span></span>ქსელი</button>
       <button type="button" data-view="live"><span class="tab-ico"><svg class="icon"><use href="#i-radar"/></svg></span>Live</button>
       <button type="button" data-view="hw"><span class="tab-ico"><svg class="icon"><use href="#i-hdd"/></svg></span>PC</button>
-      <button type="button" data-view="term"><span class="tab-ico"><svg class="icon"><use href="#i-terminal"/></svg></span><span class="tl" data-s="ტერმ.">ტერმინალი</span></button>
       <button type="button" data-view="settings"><span class="tab-ico"><svg class="icon"><use href="#i-settings"/></svg></span><span class="tl" data-s="პარამ.">პარამეტრები</span></button>
     </nav>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -195,9 +196,66 @@ def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     return text[:limit] + f"\n... [output შემოკლდა, სულ {len(text)} სიმბოლო. გამოიყენე ფილტრი, მაგ. '| include']"
 
 
+_PORT_LOCKS: dict[str, threading.Lock] = {}
+_PORT_LOCKS_GUARD = threading.Lock()
+
+
+def port_lock(port: str) -> threading.Lock:
+    with _PORT_LOCKS_GUARD:
+        return _PORT_LOCKS.setdefault(port.upper(), threading.Lock())
+
+
+def _connect_serial(inventory: Inventory, device: Device):
+    """Console cable: a COM port has one user at a time, so connections to it wait for each other."""
+    from netmiko import ConnectHandler
+
+    lock = port_lock(device.host)
+    if not lock.acquire(timeout=60):
+        raise ConnectionError(f"{device.host} დაკავებულია NetAgent-ის სხვა სესიით")
+    try:
+        try:
+            cred = inventory.credential_for(device)
+            user, password, secret = cred.username, cred.password, cred.secret
+        except Exception:  # noqa: BLE001 - a console often has no login at all
+            user, password, secret = "", "", ""
+        params: dict[str, Any] = {"device_type": device.device_type, "username": user, "password": password,
+                                  "serial_settings": {"port": device.host, "baudrate": device.baudrate, "bytesize": 8,
+                                                      "parity": "N", "stopbits": 1, "timeout": 1},
+                                  "conn_timeout": settings.device_timeout}
+        if secret:
+            params["secret"] = secret
+        try:
+            conn = ConnectHandler(**params)
+        except Exception as exc:
+            if "PermissionError" in repr(exc) or "Access is denied" in str(exc):
+                raise ConnectionError(f"{device.host} სხვა პროგრამას უჭირავს (PuTTY / Tera Term?) — დახურე და სცადე თავიდან") from None
+            raise
+    except BaseException:
+        lock.release()
+        raise
+    original = conn.disconnect
+
+    def disconnect():
+        try:
+            original()
+        finally:
+            if lock.locked():
+                lock.release()
+
+    conn.disconnect = disconnect
+    if secret:
+        try:
+            conn.enable()
+        except Exception:  # noqa: BLE001
+            pass
+    return conn
+
+
 def _connect(inventory: Inventory, device: Device):
     from netmiko import ConnectHandler  # imported lazily: slow import
 
+    if device.is_serial:
+        return _connect_serial(inventory, device)
     cred = inventory.credential_for(device)
     params: dict[str, Any] = {
         "device_type": device.device_type,

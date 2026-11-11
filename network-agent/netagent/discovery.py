@@ -32,9 +32,10 @@ class Candidate:
     hostname: str | None = None
     error: str = ""
     already_in_inventory: str | None = None  # name of the existing entry
+    extra: dict | None = None  # more inventory fields, e.g. {"baudrate": 9600} for a console cable
 
     def as_dict(self) -> dict:
-        return {k: v for k, v in self.__dict__.items() if v not in (None, "")}
+        return {k: v for k, v in self.__dict__.items() if v not in (None, "", {})}
 
 
 def scan_ssh(network: str, port: int = 22, timeout: float = 1.0) -> list[str]:
@@ -199,6 +200,7 @@ def add_to_inventory(path: Path, candidates: list[Candidate], credentials: str =
         if site:
             entry["site"] = site
         entry["description"] = "auto-discovered"
+        entry.update(c.extra or {})
         new[name] = entry
     if not new:
         return []

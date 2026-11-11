@@ -35,6 +35,9 @@ def check_one(device: Device, timeout: float = 3.0) -> Reachability:
 
         up, ms, reason = probe_device(device)
         return Reachability(device.name, device.host, device.port if device.port != 22 else 161, up, ms, reason)
+    if device.is_serial:  # console cable: plugged in = reachable (opening the port would take it from the user)
+        up = serial_present(device.host)
+        return Reachability(device.name, device.host, 0, up, None, "" if up else f"{device.host} არ არის მიერთებული")
     start = time.monotonic()
     try:
         with socket.create_connection((device.host, device.port), timeout=timeout):
@@ -47,6 +50,15 @@ def check_one(device: Device, timeout: float = 3.0) -> Reachability:
     except OSError as exc:
         reason = exc.strerror or str(exc)
     return Reachability(device.name, device.host, device.port, False, reason=reason)
+
+
+def serial_present(port: str) -> bool:
+    try:
+        from serial.tools import list_ports
+
+        return any(p.device.upper() == port.upper() for p in list_ports.comports())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def check_many(devices: list[Device], timeout: float = 3.0, retries: int = 1) -> list[Reachability]:

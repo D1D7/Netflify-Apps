@@ -30,6 +30,11 @@ class Device:
     tags: tuple[str, ...] = field(default_factory=tuple)
     # Deep monitoring settings, see watch.py (interfaces / bgp / ospf / cpu)
     watch: dict = field(default_factory=dict, hash=False, compare=False)
+    baudrate: int = 9600  # console cable only: host is the COM port, device_type ends with "_serial"
+
+    @property
+    def is_serial(self) -> bool:
+        return self.device_type.endswith("_serial")
 
     def public_info(self) -> dict:
         """What the LLM is allowed to see about the device (no credentials)."""
@@ -81,6 +86,7 @@ class Inventory:
                 description=str(raw.get("description", "")),
                 tags=tuple(raw.get("tags", []) or []),
                 watch=raw.get("watch") if isinstance(raw.get("watch"), dict) else {},
+                baudrate=int(raw.get("baudrate", 9600)),
             )
         return cls(devices, creds)
 

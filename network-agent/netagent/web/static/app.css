@@ -672,7 +672,7 @@ button.list-row:active { background: var(--surface-2); }
     grid-template-areas: "top . side" "main . side" "rail . side";
   }
   .app.two-pane[data-view="chat"] .tabbar {
-    grid-template-columns: repeat(6, minmax(0, 1fr)); grid-auto-rows: auto; border-right: 0; border-top: 1px solid var(--border);
+    grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: auto; border-right: 0; border-top: 1px solid var(--border);
     padding: 6px 8px calc(6px + var(--safe-bottom));
   }
   .app.two-pane[data-view="chat"] .tabbar button { min-height: 56px; }
@@ -821,7 +821,7 @@ button.list-row:active { background: var(--surface-2); }
 /* ====================================================================
    Live Devices
    ==================================================================== */
-.tabbar { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.tabbar { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .tabbar button { font-size: 11.5px; }
 .tab-ico { width: 54px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1128,3 +1128,42 @@ button.list-row:active { background: var(--surface-2); }
 .mt-reboot summary { cursor: pointer; font-weight: 600; color: var(--text); }
 .mt-reboot p { margin: 6px 0 8px; }
 .mt-card .hw-badge:not(.s-ok):not(.s-bad):not(.s-warn) { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* ---- PC: system and live load ---- */
+.si-title { display: flex; align-items: center; gap: 7px; font-size: 14.5px; }
+.si-title .icon { width: 17px; height: 17px; color: var(--accent); }
+.si-sub { font-size: 12.5px; color: var(--text-2); margin-top: 3px; overflow-wrap: anywhere; }
+.si-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.si-big { text-align: right; line-height: 1.05; flex: none; }
+.si-big b { font-size: 26px; font-variant-numeric: tabular-nums; }
+.si-big small { display: block; font-size: 11px; color: var(--muted); }
+.si-card.t-good .si-big b { color: #10b981; } .si-card.t-warn .si-big b { color: var(--warning); } .si-card.t-bad .si-big b { color: var(--critical); }
+.si-spark { width: 100%; height: 44px; margin-top: 8px; display: block; }
+.si-spark path { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.si-spark path.fill { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }
+.si-cores { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; height: 54px; margin-top: 8px; }
+.si-core { position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; border-radius: 6px;
+  background: var(--surface-2); overflow: hidden; }
+.si-core span { width: 100%; background: #10b981; transition: height 0.6s ease; }
+.si-core.t-warn span { background: var(--warning); } .si-core.t-bad span { background: var(--critical); }
+.si-core small { position: absolute; bottom: 2px; font-size: 9.5px; color: var(--text); opacity: 0.75; }
+.si-ads { display: grid; gap: 6px; margin-top: 8px; }
+.si-ad { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); opacity: 0.65; }
+.si-ad.up { opacity: 1; }
+.si-ad-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.si-ad-top span { color: var(--text-2); font-size: 12px; }
+.si-ad.up .si-ad-top span { color: #10b981; }
+.si-ad-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+
+/* ---- console cable ---- */
+.con-list { display: grid; gap: 8px; margin-top: 8px; }
+.con-row { padding: 10px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.con-row.on { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.con-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13.5px; }
+.con-top span { color: var(--text-2); font-size: 12.5px; text-align: right; }
+.con-row.on .con-top span { color: var(--accent); font-weight: 600; }
+.con-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.con-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.con-btns:empty { display: none; }
+.con-btns .btn { padding: 6px 12px; font-size: 12.5px; }
+.con-out { margin-top: 10px; padding: 10px; border-radius: 12px; background: var(--surface-2); font-size: 13px; }

@@ -1204,6 +1204,214 @@ async function loadMemtest() {
   try { renderMemtest(await apiJson("/api/memtest")); } catch { /* ignore */ }
 }
 
+// ---------------------------------------------------------------- this PC: system info and live load
+
+const si = { data: null, hist: [], timer: null };
+const fmtB = (n) => {
+  if (n == null) return "—";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${i ? n.toFixed(1) : Math.round(n)} ${u[i]}`;
+};
+const fmtUp = (s) => { const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60); return `${d ? `${d} დღე ` : ""}${h} სთ ${m} წთ`; };
+
+function siSpark(values, max = 100) {
+  const v = values.filter((x) => x != null).slice(-120);
+  if (v.length < 2) return "";
+  const W = 200, H = 40;
+  const pts = v.map((x, i) => `${((i / (v.length - 1)) * W).toFixed(1)},${(H - 2 - (Math.min(x, max) / max) * (H - 4)).toFixed(1)}`);
+  return `<svg class="si-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path class="fill" d="M0,${H} L${pts.join(" L")} L${W},${H} Z"/><path d="M${pts.join(" L")}"/></svg>`;
+}
+
+const siTone = (pct) => (pct == null ? "" : pct >= 90 ? "bad" : pct >= 70 ? "warn" : "good");
+
+function renderSysinfo() {
+  const d = si.data;
+  if (!d) return;
+  const live = d.live || {};
+  const o = d.os || {}, c = d.computer || {};
+  const box = $("#si-box");
+  box.replaceChildren();
+  const card = (cls, html) => { const x = el("div", `hw-card si-card ${cls}`, html); box.appendChild(x); return x; };
+
+  const osCard = card("si-os", `<div class="si-title">${icon("monitor")}<b></b></div><div class="si-sub"></div>
+    <div class="hw-facts"></div>`);
+  osCard.querySelector("b").textContent = o.pretty || o.caption || "Windows";
+  osCard.querySelector(".si-sub").textContent = `${c.name || ""}${c.maker ? ` · ${c.maker} ${c.model || ""}` : ""}`;
+  osCard.querySelector(".hw-facts").innerHTML = [
+    hwFact("მომხმარებელი", c.user), hwFact(c.domain ? "დომენი" : "სამუშაო ჯგუფი", c.domain || c.workgroup),
+    hwFact("დაყენდა", o.installed ? o.installed.slice(0, 10) : null), hwFact("ჩართულია", d.uptime_s != null ? fmtUp(d.uptime_s) : null),
+  ].join("");
+
+  const cpu = (d.cpu || [])[0] || {};
+  const hist = si.hist;
+  const cpuCard = card(`si-cpu t-${siTone(live.cpu)}`, `<div class="si-row"><div><div class="si-title">${icon("chip")}<b>CPU</b></div>
+      <div class="si-sub"></div></div><div class="si-big"><b>${live.cpu ?? "—"}%</b><small>${live.mhz ? `${(live.mhz / 1000).toFixed(2)} GHz` : ""}</small></div></div>
+    ${siSpark(hist.map((h) => h[1]))}<div class="si-cores"></div>`);
+  cpuCard.querySelector(".si-sub").textContent = `${cpu.name || ""} · ${cpu.cores ?? "?"} ბირთვი / ${cpu.threads ?? "?"} ნაკადი`;
+  const cores = cpuCard.querySelector(".si-cores");
+  (live.cores || []).forEach((v, i) => {
+    const b = el("div", `si-core t-${siTone(v)}`, `<span style="height:${Math.max(3, v)}%"></span><small>${i}</small>`);
+    b.title = `ნაკადი ${i}: ${v}%`;
+    cores.appendChild(b);
+  });
+
+  for (const g of d.gpu || []) {
+    const vramUsed = (live.vram_dedicated || 0) + (live.vram_shared || 0);
+    const gCard = card(`si-gpu t-${siTone(live.gpu)}`, `<div class="si-row"><div><div class="si-title">${icon("image")}<b>GPU</b></div>
+        <div class="si-sub"></div></div><div class="si-big"><b>${live.gpu ?? "—"}%</b><small>დატვირთვა</small></div></div>
+      ${siSpark(hist.map((h) => h[3]))}<div class="hw-facts"></div>`);
+    gCard.querySelector(".si-sub").textContent = g.name;
+    gCard.querySelector(".hw-facts").innerHTML = [hwFact("დრაივერი", g.driver), hwFact("VRAM", fmtB(g.vram)),
+      hwFact("ვიდეომეხსიერება ახლა", live.vram_dedicated != null ? `${fmtB(vramUsed)}${live.vram_dedicated ? "" : " (საერთო)"}` : null)].join("");
+  }
+
+  const ramCard = card(`si-ram t-${siTone(live.ram_pct)}`, `<div class="si-row"><div><div class="si-title">${icon("server")}<b>RAM</b></div>
+      <div class="si-sub"></div></div><div class="si-big"><b>${live.ram_pct ?? "—"}%</b><small>გამოყენებული</small></div></div>
+    ${siSpark(hist.map((h) => h[2]))}`);
+  ramCard.querySelector(".si-sub").textContent = `${fmtB(live.ram_used)} / ${fmtB(live.ram_total)} · თავისუფალი ${fmtB((live.ram_total || 0) - (live.ram_used || 0))}`;
+
+  const parts = d.partitions || [];
+  if (parts.length) {
+    const pCard = card("si-parts", `<div class="si-title">${icon("hdd")}<b>დანაყოფები</b></div><div class="hw-vols"></div>`);
+    for (const p of parts) {
+      const row = el("div", `hw-vol${p.pct >= 90 ? " full" : ""}`, `<div class="hw-vol-top"><b></b><span></span></div><div class="hw-bar"><span style="width:${p.pct}%"></span></div>`);
+      row.querySelector("b").textContent = `${p.mount} (${p.fs})`;
+      row.querySelector(".hw-vol-top span").textContent = `${fmtB(p.used)} / ${fmtB(p.total)} · თავისუფალი ${fmtB(p.free)} · ${p.pct}%`;
+      pCard.querySelector(".hw-vols").appendChild(row);
+    }
+  }
+
+  const ads = (d.adapters || []).filter((a) => !a.virtual || a.status === "Up")
+    .sort((a, b) => (a.virtual - b.virtual) || ((b.status === "Up") - (a.status === "Up")));
+  if (ads.length) {
+    const aCard = card("si-net", `<div class="si-title">${icon("network")}<b>ქსელის ადაპტერები</b></div><div class="si-ads"></div>`);
+    for (const a of ads) {
+      const row = el("div", `si-ad${a.status === "Up" ? " up" : ""}`, `<div class="si-ad-top"><b></b><span></span></div><div class="si-ad-sub"></div>`);
+      row.querySelector("b").textContent = a.name;
+      row.querySelector(".si-ad-top span").textContent = a.status === "Up" ? (a.link || "Up") : a.status;
+      row.querySelector(".si-ad-sub").textContent = [a.ipv4?.join(", ") || "IP —", `MAC ${a.mac || "—"}`,
+        a.gateway ? `gateway ${a.gateway}` : "", a.dns?.length ? `DNS ${a.dns.join(", ")}` : "", a.dhcp === "Enabled" ? "DHCP" : a.ipv4?.length ? "სტატიკური" : "",
+        a.description].filter(Boolean).join(" · ");
+      aCard.querySelector(".si-ads").appendChild(row);
+    }
+  }
+}
+
+async function loadSysinfo(refresh = false) {
+  clearTimeout(si.timer);
+  try {
+    if (!si.data || refresh) {
+      si.data = await apiJson(`/api/sysinfo${refresh ? "?refresh=1" : ""}`);
+      si.hist = si.data.history || [];
+    } else {
+      const r = await apiJson("/api/sysinfo?live=1");
+      si.data.live = r.live;
+      const last = r.history?.[0];
+      if (last && (!si.hist.length || si.hist.at(-1)[0] !== last[0])) si.hist = [...si.hist.slice(-299), last];
+    }
+    renderSysinfo();
+  } catch (err) {
+    if (err.message !== "unauthorized" && !si.data) $("#si-box").replaceChildren(Object.assign(el("div", "empty-note"), { textContent: `⚠️ ${err.message}` }));
+  }
+  if (state.view === "hw" && !document.hidden) si.timer = setTimeout(() => loadSysinfo(), 2000);
+}
+
+// ---------------------------------------------------------------- console cable (COM ports)
+
+async function consoleAction(action, port, btn) {
+  const out = $("#con-out");
+  if (btn) btn.disabled = true;
+  out.hidden = false;
+  out.textContent = action === "add" ? "ვკითხულობ მოწყობილობას (show version)..." : "ვამოწმებ...";
+  try {
+    const r = await apiJson("/api/console", { method: "POST", json: { action, port } });
+    out.innerHTML = md(r.text || "");
+    const bar = el("div", "con-btns");
+    for (const b of r.buttons || []) {
+      const m = b.command.match(/^\/console (probe|add|login|skipsetup) (\S+)$/);
+      const x = el("button", "chip");
+      x.type = "button";
+      x.textContent = b.label;
+      x.addEventListener("click", () => (m ? consoleAction(m[1], m[2], x) : (switchView("chat"), send(b.command))));
+      bar.appendChild(x);
+    }
+    out.appendChild(bar);
+    if (action === "add") { loadConsole(); loadOverview(); }
+  } catch (err) {
+    out.textContent = `⚠️ ${err.message}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// every few seconds while the app is open: a newly plugged console cable shows up at once
+const conWatch = { known: null, timer: null, seen: {} };
+
+async function watchConsole() {
+  clearTimeout(conWatch.timer);
+  if (!document.hidden && !$("#app").hidden) {
+    try {
+      const data = await apiJson("/api/console");
+      const now = Object.fromEntries(data.ports.map((p) => [p.port, p]));
+      if (conWatch.known) {
+        for (const [port, p] of Object.entries(now)) {
+          const before = conWatch.known[port];
+          if (!before) toast(`🔌 Console კაბელი შეერთდა: ${port}`);
+          else if (p.device && !before.device) toast(`✅ ${p.device} დაემატა (${port})`);
+          else if (p.state && p.state !== before.state && !p.device && conWatch.seen[port] !== p.state) {
+            conWatch.seen[port] = p.state;
+            toast(`🔌 ${port}: ${p.state_text || p.state}`);
+          }
+        }
+        for (const port of Object.keys(conWatch.known)) if (!now[port]) toast(`🔌 Console კაბელი გამოერთდა: ${port}`);
+        const changed = JSON.stringify(conWatch.known) !== JSON.stringify(now);
+        if (changed && state.view === "dash") renderConsole(data);
+        if (changed && Object.values(now).some((p) => p.device && !conWatch.known[p.port]?.device)) loadOverview();
+      }
+      conWatch.known = now;
+    } catch { /* offline or logged out */ }
+  }
+  conWatch.timer = setTimeout(watchConsole, 4000);
+}
+
+async function loadConsole() {
+  let data;
+  try { data = await apiJson("/api/console"); } catch { return; }
+  renderConsole(data);
+}
+
+function renderConsole(data) {
+  const list = $("#con-list");
+  list.replaceChildren();
+  if (!data.ports.length) {
+    list.appendChild(Object.assign(el("div", "empty-note"), { textContent: "COM პორტი არ ჩანს — console კაბელი (USB) შეაერთე." }));
+    return;
+  }
+  for (const r of data.ports) {
+    const row = el("div", `con-row${r.device ? " on" : ""}`, `<div class="con-top"><b></b><span></span></div><div class="con-sub"></div><div class="con-btns"></div>`);
+    row.querySelector("b").textContent = r.port;
+    row.querySelector(".con-top span").textContent = r.device ? `NetAgent-ში: ${r.device}` : r.description;
+    row.querySelector(".con-sub").textContent = r.device ? r.description : (r.state_text || r.result || "");
+    const btns = row.querySelector(".con-btns");
+    const add = (label, action, primary) => {
+      const b = el("button", primary ? "btn primary" : "btn");
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", () => consoleAction(action, r.port, b));
+      btns.appendChild(b);
+    };
+    if (!r.device) {
+      if (r.state === "setup_dialog" || r.state === "autoinstall") add("setup-ის გამოტოვება", "skipsetup", true);
+      else if (r.state === "login_user" || r.state === "login_password") add("შესვლა", "login", true);
+      else add("დამატება", "add", true);
+      add("შემოწმება", "probe");
+    }
+    list.appendChild(row);
+  }
+}
+
 async function loadOverview() {
   const btn = $("#dash-refresh");
   btn.classList.add("spinning");
@@ -1363,7 +1571,7 @@ function mapPopup(n, fx, fy) {
   if (n.known) {
     add("ჯანმრთელობა", () => send(`/health ${n.id}`));
     add("დიაგნოსტიკა", () => send(`/diagnose ${n.id}`));
-    add("ტერმინალი", () => { switchView("term"); setTimeout(() => { const s = $("#term-dev"); if ([...s.options].some((o) => o.value === n.id)) { s.value = n.id; s.dispatchEvent(new Event("change")); } }, 300); });
+    add("ინტერფეისები", () => { switchView("chat"); send(`/cmd ${n.id} show ip interface brief`); });
   } else if (n.ip) {
     add("შემოწმება", () => send(`/diagnose ${n.ip}`));
   }
@@ -1696,7 +1904,7 @@ function switchView(name) {
   document.querySelectorAll(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   const sidePane = applyLayout();
   if (name === "dash" || (sidePane && !state.overview)) loadOverview();
-  if (name === "dash") { loadMap(); loadRooms(); loadDz(); }
+  if (name === "dash") { loadMap(); loadRooms(); loadDz(); loadConsole(); }
   if (name !== "dash") dzWalkStop();
   if (name === "settings") {
     refreshPushUI();
@@ -1706,7 +1914,8 @@ function switchView(name) {
   }
   if (name === "chat") scrollDown();
   if (name === "term") openTerminal();
-  if (name === "hw") { loadHw(); loadMemtest(); }
+  if (name === "hw") { loadHw(); loadMemtest(); loadSysinfo(); }
+  else clearTimeout(si.timer);
   if (name === "live") startLive();
   else stopLive();
 }
@@ -1999,6 +2208,7 @@ function showWho(me) {
 function showApp() {
   $("#login").hidden = true;
   $("#app").hidden = false;
+  watchConsole();
   apiJson("/api/me").then(showWho).catch(() => {});
   switchView(state.view);
   renderAll();
@@ -2110,7 +2320,8 @@ async function init() {
     if (e.key === "ArrowDown") { termPos = Math.min(termHistory.length, termPos + 1); e.target.value = termHistory[termPos] || ""; }
   });
   const initial = new URLSearchParams(location.search).get("view");
-  if (initial && VIEW_TITLES[initial]) state.view = initial;
+  if (initial && VIEW_TITLES[initial] && initial !== "term") state.view = initial;
+  if (state.view === "term") state.view = "chat";  // the Terminal tab was removed
   $("#pane-expand").addEventListener("click", () => switchView("dash"));
   // Re-layout when the Fold is opened/closed or rotated.
   for (const mq of [MQ_WIDE, MQ_SEG_SIDE, MQ_SEG_STACK]) mq.addEventListener("change", () => { applyLayout(); scrollDown(); });
@@ -2125,7 +2336,8 @@ async function init() {
   $("#netsum").addEventListener("click", () => switchView("dash"));
   $("#dash-refresh").addEventListener("click", () => { loadOverview(); if (state.view === "dash") loadMap(); });
   $("#map-refresh").addEventListener("click", () => loadMap(true));
-  $("#hw-refresh").addEventListener("click", () => loadHw(true));
+  $("#con-refresh").addEventListener("click", () => loadConsole());
+  $("#hw-refresh").addEventListener("click", () => { loadHw(true); loadSysinfo(true); });
   const mtAction = (action, json = {}) => apiJson(`/api/memtest/${action}`, { method: "POST", json })
     .then(() => setTimeout(loadMemtest, 400)).catch((e) => toast(e.message));
   $("#mt-quick").addEventListener("click", () => mtAction("start", { mode: "quick" }));
