@@ -20,14 +20,17 @@ LHM = {"Text": "Sensor", "Children": [{"Text": "DESKTOP-QOE49MP", "ImageURL": "i
     {"Text": "11th Gen Intel Core i5-1135G7", "ImageURL": "images_icon/cpu.png", "Children": [
         {"Text": "Temperatures", "ImageURL": "images_icon/temperature.png", "Children": [
             sensor("CPU Core #1", 52.0, "/intelcpu/0/temperature/0"), sensor("CPU Core #2", 55.5, "/intelcpu/0/temperature/1"),
-            sensor("CPU Package", 58.0, "/intelcpu/0/temperature/4")]},
+            sensor("CPU Package", 58.0, "/intelcpu/0/temperature/4"), sensor("Core Max", 55.5, "/intelcpu/0/temperature/5"),
+            sensor("CPU Core #1 Distance to TjMax", 48.0, "/intelcpu/0/temperature/6")]},
         {"Text": "Load", "ImageURL": "images_icon/load.png", "Children": [
             {"Text": "CPU Total", "Value": "12.5 %", "SensorId": "/intelcpu/0/load/0", "Type": "Load", "Children": []}]}]},
     {"Text": "NVIDIA GeForce RTX 3060", "ImageURL": "images_icon/nvidia.png", "Children": [
         {"Text": "Temperatures", "Children": [sensor("GPU Core", 61.0, "/gpu-nvidia/0/temperature/0"),
                                               sensor("GPU Hot Spot", 70.0, "/gpu-nvidia/0/temperature/2")]}]},
     {"Text": "WD PC SN530", "ImageURL": "images_icon/hdd.png", "Children": [
-        {"Text": "Temperatures", "Children": [sensor("Composite Temperature", 36.0, "/nvme/0/temperature/0")]}]}]}]}
+        {"Text": "Temperatures", "Children": [sensor("Composite Temperature", 36.0, "/nvme/0/temperature/0"),
+                                              sensor("Warning Temperature", 82.0, "/nvme/0/temperature/1"),
+                                              sensor("Critical Temperature", 84.0, "/nvme/0/temperature/2")]}]}]}]}
 
 
 def test_parse_lhm():
@@ -35,6 +38,8 @@ def test_parse_lhm():
     kinds = {(x["kind"], x["name"]) for x in s}
     assert ("cpu", "CPU Package") in kinds and ("gpu", "GPU Core") in kinds and ("disk", "Composite Temperature") in kinds
     assert all(x["name"] != "CPU Total" for x in s)  # load is not a temperature
+    names = {x["name"] for x in s}
+    assert not names & {"Warning Temperature", "Critical Temperature", "Core Max", "CPU Core #1 Distance to TjMax"}
     assert tp.summarize(s) == {"cpu": 58.0, "gpu": 61.0, "disk": 36.0}
     assert next(x for x in s if x["name"] == "CPU Package")["max"] == 68.0
 

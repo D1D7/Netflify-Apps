@@ -48,6 +48,10 @@ def is_admin() -> bool:
 # ---------------------------------------------------------------------------------------------------------
 # LibreHardwareMonitor JSON
 # ---------------------------------------------------------------------------------------------------------
+NOT_A_READING = re.compile(r"distance to tjmax|warning temperature|critical temperature|\blimit\b|threshold|\btjmax\b|"
+                           r"\bmax\b|\baverage\b", re.I)
+
+
 def _kind(sensor_id: str, image: str) -> str:
     sid, img = (sensor_id or "").lower(), (image or "").lower()
     if re.match(r"/(intelcpu|amdcpu|cpu)", sid) or "cpu" in img:
@@ -74,6 +78,8 @@ def parse_lhm(data: dict) -> list[dict]:
         name = node.get("Text") or ""
         if node.get("Type") == "Temperature" or ("°C" in str(node.get("Value", "")) and not children):
             v = num(node.get("Value"))
+            if NOT_A_READING.search(name):  # limits ("Warning/Critical Temperature") and deltas ("Distance to TjMax")
+                return
             if v is not None and -20 < v < 150:
                 out.append({"kind": _kind(node.get("SensorId", ""), img), "hw": hw, "name": name, "value": round(v, 1),
                             "max": num(node.get("Max"))})
