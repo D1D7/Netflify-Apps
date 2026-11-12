@@ -1,0 +1,14 @@
+services:
+  netagent:
+    build: .
+    container_name: netagent
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./inventory/devices.yaml:/app/inventory/devices.yaml:ro
+      - ./backups:/app/backups
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - ./data:/app/data
+    # Uses the host network so the bot reaches the management network exactly like the host does.
+    network_mode: host

@@ -1,0 +1,728 @@
+"""HTTP API + static files for the NetAgent app (Android / desktop, installable PWA)."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+
+from .. import commands
+from ..audit import log_event
+from ..config import settings
+from ..permissions import web_user
+from ..content import UploadError, build_content
+from ..formatting import describe_tool
+from ..health import check_many
+from . import auth as auth_module
+from .auth import LOGIN_MAX_FAILURES, WebAuth, device_label
+from .push import PushSender
+
+log = logging.getLogger("netagent.web")
+
+STATIC = Path(__file__).parent / "static"
+COOKIE = "na_session"
+SESSION_ID = "app"  # single-user app: one conversation
+MAX_FILES = 5
+SPARK_POINTS = 24  # 2 hours at the default 5-minute monitoring interval
+_SAFE_FILE = re.compile(r"^[\w.-]+$")
+PUBLIC_API = {"/api/login", "/api/me"}
+TOKEN_API = {"/api/command", "/api/overview"}  # reachable with NETAGENT_API_TOKEN (another NetAgent, /remote)
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; "
+        "connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "X-Frame-Options": "DENY",
+    "Permissions-Policy": "camera=(self), microphone=(), geolocation=()",
+}
+
+
+def isp_overview(services) -> dict | None:
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from ..features.isp import monitor_for
+
+    m = monitor_for(services)
+    rows = m.samples(_dt.now() - _td(hours=24))
+    if not rows:
+        return None
+    step = max(1, len(rows) // 120)
+    points = [[r[0].isoformat(timespec="minutes"), r[2] if r[1] else None] for r in rows[::step]]
+    s = m.summary(1)
+    tests = s.get("speedtests") or []
+    return {"points": points, "uptime": s["uptime_percent"], "latency": rows[-1][2], "outages": len(s["outages"]),
+            "down_now": bool(s["down_now_since"]), "last_speed": tests[-1] if tests else None}
+
+
+def security_overview(services) -> dict:
+    from ..features.secwatch import load
+
+    w = load(services.state)
+    day_ago = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    found = [e for e in (w.get("events") or []) if e["ts"] >= day_ago]
+    return {"ok": not found, "findings_24h": len(found), "checked_at": w.get("checked_at")}
+
+
+def create_app(services, monitoring, auth: WebAuth, push: PushSender | None) -> FastAPI:
+    app = FastAPI(title="NetAgent", docs_url=None, redoc_url=None, openapi_url=None)
+    auth_module.ACTIVE = auth  # /sessions and /kick use the running server's session list
+
+    def client_id(request: Request) -> str:
+        # Not X-Forwarded-For: its first entry is whatever the client wrote, so a new fake IP per try would
+        # dodge the login lockout. uvicorn already sets client.host from the trusted local proxy (Tailscale serve).
+        return request.client.host if request.client else "?"
+
+    async def security_alert(text: str) -> None:
+        """Push/Telegram notification about logins (never breaks the login itself)."""
+        if monitoring is None:
+            return
+        try:
+            from ..monitoring import Alert
+            from ..result import Button
+
+            await monitoring.emit(Alert("security", text, [], mutable=False,
+                                        buttons=[Button("👥 სესიები", "/sessions"), Button("📜 ჟურნალი", "/activity")]))
+        except Exception:  # noqa: BLE001
+            log.exception("security alert failed")
+
+    def api_token_user(request: Request) -> str | None:
+        """Another NetAgent (see /remote) calls with "Authorization: Bearer <NETAGENT_API_TOKEN>"."""
+        import hmac as _hmac
+
+        token = os.getenv("NETAGENT_API_TOKEN", "").strip()
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if len(token) < 24 or not given or not _hmac.compare_digest(given, token):
+            return None
+        # view-only unless the owner of THIS NetAgent sets NETAGENT_API_ROLE=admin in its .env
+        admin = os.getenv("NETAGENT_API_ROLE", "viewer").strip().lower() == "admin"
+        return f"{'app' if admin else 'view'}:remote-{client_id(request)}"
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/api/"):
+            # CSRF: browsers cannot add custom headers cross-site without a CORS preflight we never allow.
+            if request.method not in ("GET", "HEAD") and request.headers.get("x-netagent") != "1":
+                return JSONResponse({"error": "missing X-NetAgent header"}, status_code=403)
+            if path not in PUBLIC_API:
+                account = auth.session_user(request.cookies.get(COOKIE))
+                if account is not None:
+                    request.state.who = web_user(account["name"], account["role"])
+                elif path in TOKEN_API and (remote := api_token_user(request)):
+                    request.state.who = remote
+                else:
+                    return JSONResponse({"error": "unauthorized"}, status_code=401)
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        if path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    # -- Prometheus metrics for Grafana (bearer token, off unless NETAGENT_METRICS_TOKEN is set) --
+    @app.get("/metrics")
+    async def metrics(request: Request):
+        import hmac as _hmac
+
+        from ..features.metrics import render
+
+        token = os.getenv("NETAGENT_METRICS_TOKEN", "")
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not token or not _hmac.compare_digest(given, token):
+            return Response(status_code=404 if not token else 401)
+        return Response(await asyncio.to_thread(render, services), media_type="text/plain; version=0.0.4")
+
+    # -- static / PWA shell ----------------------------------------------------
+    @app.get("/")
+    async def index():
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/sw.js")
+    async def service_worker():
+        return FileResponse(STATIC / "sw.js", media_type="text/javascript",
+                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+    @app.get("/manifest.webmanifest")
+    async def manifest():
+        return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/static/{name}")
+    async def static(name: str):
+        path = STATIC / name
+        if not _SAFE_FILE.match(name) or not path.is_file():
+            return Response(status_code=404)
+        return FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+    # -- auth --------------------------------------------------------------------
+    @app.get("/api/me")
+    async def me(request: Request):
+        account = auth.session_user(request.cookies.get(COOKIE))
+        return {"authenticated": account is not None, "configured": auth.configured, "totp": auth.totp_enabled,
+                "user": account["name"] if account else None, "role": account["role"] if account else None,
+                "multiuser": len(auth.list_users()) > 1}
+
+    @app.post("/api/login")
+    async def login(request: Request):
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        username = str(body.get("username", "")).strip().lower()[:32]
+        ip, ua = client_id(request), request.headers.get("user-agent", "")
+        token, error = await asyncio.to_thread(
+            auth.login, str(body.get("password", "")), str(body.get("totp", "")), ip, username, {"ua": ua})
+        name = username or "admin"
+        log_event(settings.audit_log_path, user=f"login:{name}", tool="login",
+                  args={"from": ip, "device": device_label(ua)}, ok=bool(token))
+        if not token:
+            fails = auth.failures(ip)
+            if fails in (3, LOGIN_MAX_FAILURES):  # once at 3, once at the lockout
+                locked = fails >= LOGIN_MAX_FAILURES
+                await security_alert(f"⚠️ **{fails} წარუმატებელი შესვლა** ({name}) · {device_label(ua)} · {ip}"
+                                     + ("\n🔒 ეს მისამართი 15 წუთით დაიბლოკა." if locked else ""))
+            status = 429 if "15 წუთში" in error else 401
+            return JSONResponse({"error": error}, status_code=status)
+        seen = await asyncio.to_thread(auth.note_login, name, ip)
+        if seen:
+            what = "პირველად შევიდა" if seen == "first" else "შევიდა **ახალი მოწყობილობიდან**"
+            await security_alert(f"🔐 **{name}** {what}: {device_label(ua)} · {ip}\nთუ ეს შენ/თქვენ არ ხართ: /kick {name}")
+        resp = JSONResponse({"ok": True})
+        secure = request.url.scheme == "https"
+        resp.set_cookie(COOKIE, token, max_age=30 * 86400, httponly=True, samesite="strict", secure=secure, path="/")
+        return resp
+
+    @app.post("/api/logout")
+    async def logout(request: Request):
+        body = await _json(request)
+        account = auth.session_user(request.cookies.get(COOKIE))
+        if account is not None:
+            log_event(settings.audit_log_path, user=web_user(account["name"], account["role"]), tool="logout",
+                      args={"from": client_id(request), "everywhere": bool(body.get("everywhere"))}, ok=True)
+        if body.get("everywhere"):
+            auth.logout_everywhere()
+        else:
+            auth.logout(request.cookies.get(COOKIE))  # the old cookie stops working on the server too
+        resp = JSONResponse({"ok": True})
+        resp.delete_cookie(COOKIE, path="/")
+        return resp
+
+    # -- dashboard ---------------------------------------------------------------
+    @app.get("/api/overview")
+    async def overview():
+        inv = services.inventory()
+        results = await asyncio.to_thread(check_many, list(inv.devices.values()), 2.0, 0)
+        history = await asyncio.to_thread(services.history.read_all, 2)
+        devices = []
+        for r in sorted(results, key=lambda r: (r.up, r.device)):
+            d = inv.devices[r.device]
+            points = history.get(r.device, [])[-SPARK_POINTS:]
+            devices.append({"name": r.device, "host": r.host, "type": d.device_type, "site": d.site, "role": d.role,
+                            "up": r.up, "latency_ms": r.latency_ms, "reason": r.reason,
+                            "muted": services.mutes.is_muted(r.device), "watched": bool(d.watch),
+                            "spark": [p[2] if p[1] else None for p in points]})
+        today = services.usage.day()
+        alerts = services.alerts.recent(50)
+        day_ago = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        return {
+            "devices": devices,
+            "up": sum(r.up for r in results),
+            "total": len(results),
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "alerts_24h": sum(1 for a in alerts if a["ts"] >= day_ago and a["kind"] in {"down", "watch", "config", "syslog", "newdevice", "isp", "site", "escalation", "security"}),
+            "alerts": alerts[:30],
+            "mutes": services.mutes.active(),
+            "usage": {"today": round(today.get("cost", 0.0), 3), "requests": today.get("requests", 0),
+                      "month": services.usage.month_cost(), "budget": services.usage.daily_budget_usd},
+            "model": settings.model,
+            "demo": os.getenv("NETAGENT_DEMO") == "1",
+            "isp": await asyncio.to_thread(isp_overview, services),
+            "security": security_overview(services),
+        }
+
+    # -- commands & chat -----------------------------------------------------------
+    @app.post("/api/command")
+    async def command(request: Request):
+        line = str((await _json(request)).get("line", "")).strip()[:2000]
+        who = request.state.who
+        result = await asyncio.to_thread(commands.run, services, line, who)
+        if result is None:
+            return JSONResponse({"error": "უცნობი ბრძანება. /help"}, status_code=400)
+        logged = re.sub(r"^(/remote\s+add\s+\S+\s+\S+\s+)\S+", r"\1<token>", line, flags=re.I)  # no tokens in the log
+        log_event(settings.audit_log_path, user=who, tool="command", args={"line": logged[:300]},
+                  ok=not result.text.startswith(("⛔", "⚠️")))
+        return result.as_dict()
+
+    @app.get("/api/interfaces")
+    async def interfaces(device: str = ""):
+        """Interface names of a device, for Tab completion in the terminal (cached for 10 minutes)."""
+        from ..features.ifnames import interface_names
+
+        try:
+            names = await asyncio.to_thread(interface_names, services, device)
+        except Exception as exc:  # noqa: BLE001 - completion is optional: never break the terminal
+            log.info("interface names for %s: %s", device, exc)
+            names = []
+        return {"device": device, "interfaces": names}
+
+    @app.post("/api/chat")
+    async def chat(request: Request, text: str = Form(""), files: list[UploadFile] = File(default=[])):
+        who = request.state.who
+        if len(files) > MAX_FILES:
+            return JSONResponse({"error": f"მაქსიმუმ {MAX_FILES} ფაილი"}, status_code=400)
+        uploads = [(f.filename or "file", (f.content_type or "").lower(), await f.read()) for f in files]
+        try:
+            content = build_content(text, uploads)
+        except UploadError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if not uploads and not text.strip():
+            return JSONResponse({"error": "ცარიელი შეტყობინება"}, status_code=400)
+
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def on_tool(name: str, args: dict) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, ("step", {"label": describe_tool(name, args)}))
+
+        async def run() -> None:
+            try:
+                # each account has its own conversation with the AI
+                reply = await asyncio.to_thread(services.agent.chat, f"{SESSION_ID}:{who}", content, user=who,
+                                                channel="web", on_tool=on_tool)
+                await queue.put(("answer", {"text": reply.text, "files": [p.name for p in reply.files],
+                                             "buttons": [{"label": b.label, "command": b.command} for b in reply.buttons]}))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("chat failed")
+                await queue.put(("answer", {"text": f"⚠️ შიდა შეცდომა: {type(exc).__name__}", "files": []}))
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run())
+
+        async def events():
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is None:
+                    break
+                kind, data = item
+                yield f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            await task
+
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/reset")
+    async def reset(request: Request):
+        services.agent.reset(f"{SESSION_ID}:{request.state.who}")
+        return {"ok": True}
+
+    @app.get("/api/files/{name}")
+    async def files(name: str, download: int = 0):
+        path = (settings.export_dir / name).resolve()
+        if not _SAFE_FILE.match(name) or path.parent != settings.export_dir.resolve() or not path.is_file():
+            return Response(status_code=404)
+        return FileResponse(path, filename=name if download else None)
+
+    # -- Live Devices ----------------------------------------------------------------
+    def live_engine():
+        from ..features import livedevices
+
+        return livedevices.ENGINE
+
+    def live_off() -> JSONResponse:
+        return JSONResponse({"error": "Live Devices გამორთულია (NETAGENT_LIVE=off)"}, status_code=503)
+
+    @app.get("/api/live")
+    async def live():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        return await asyncio.to_thread(engine.snapshot)
+
+    @app.get("/api/live/device")
+    async def live_device(key: str = ""):
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        data = engine.history(key[:64])
+        return data if data is not None else JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/api/live/scan")
+    async def live_scan():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        engine.request_scan()
+        return {"ok": True}
+
+    @app.post("/api/live/settings")
+    async def live_settings(request: Request):
+        from ..permissions import DENIED, is_viewer
+
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        changes = {k: body[k] for k in ("interface", "ping_interval", "scan_interval", "offline_after",
+                                        "alert_unknown", "night_alerts", "night") if k in body}
+        result = engine.update_settings(changes)
+        log_event(settings.audit_log_path, user=request.state.who, tool="live_settings", args=changes, ok=True)
+        return result
+
+    @app.get("/api/live/timeline")
+    async def live_timeline(key: str = "", days: int = 1):
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        data = engine.timeline(key[:64], days)
+        return data if data is not None else JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/api/live/trust")
+    async def live_trust(request: Request):
+        from ..permissions import DENIED, is_viewer
+
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        if body.get("all"):
+            n = engine.trust_all(request.state.who)
+            log_event(settings.audit_log_path, user=request.state.who, tool="live_trust_all", args={"count": n}, ok=True)
+            return {"ok": True, "count": n}
+        key = str(body.get("key", ""))[:64]
+        if not engine.set_trust(key, bool(body.get("trusted", True)), request.state.who):
+            return JSONResponse({"error": "not found"}, status_code=404)
+        log_event(settings.audit_log_path, user=request.state.who, tool="live_trust", args={"key": key, "trusted": bool(body.get("trusted", True))}, ok=True)
+        return {"ok": True}
+
+    # -- Wi-Fi room test: the phone measures against this PC ------------------------------------
+    _blob = os.urandom(256 * 1024)  # random, so nothing on the way can compress it
+
+    @app.get("/api/lantest/ping")
+    async def lantest_ping():
+        return {"ok": True}
+
+    @app.get("/api/lantest/down")
+    async def lantest_down(mb: int = 16):
+        from fastapi.responses import StreamingResponse
+
+        from ..features.rooms import MAX_TEST_MB
+
+        total = max(1, min(mb, MAX_TEST_MB)) * 1024 * 1024
+
+        async def body():
+            sent = 0
+            while sent < total:
+                chunk = _blob[: min(len(_blob), total - sent)]
+                sent += len(chunk)
+                yield chunk
+
+        return StreamingResponse(body(), media_type="application/octet-stream",
+                                 headers={"Content-Length": str(total), "Content-Encoding": "identity"})
+
+    @app.post("/api/lantest/up")
+    async def lantest_up(request: Request):
+        from ..features.rooms import MAX_TEST_MB
+
+        got = 0
+        async for chunk in request.stream():
+            got += len(chunk)
+            if got > MAX_TEST_MB * 1024 * 1024:
+                return JSONResponse({"error": "too large"}, status_code=413)
+        return {"bytes": got}
+
+    @app.get("/api/rooms")
+    async def rooms_list():
+        from ..features.rooms import advice, summary
+
+        rows = await asyncio.to_thread(summary, services.state)
+        return {"rooms": rows, "advice": advice(rows)}
+
+    @app.post("/api/rooms")
+    async def rooms_save(request: Request):
+        from ..features.rooms import save
+        from ..result import CommandError
+
+        body = await _json(request)
+        try:
+            entry = await asyncio.to_thread(save, services.state, body.get("room", ""), body, request.state.who)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True, "entry": entry}
+
+    # -- this PC's hardware health (disks, RAM) -------------------------------------------------------
+    _hw_cache: dict = {}
+
+    @app.get("/api/hw")
+    async def hw(refresh: int = 0):
+        import time as _time
+
+        from ..features import hwhealth
+
+        if refresh or not _hw_cache or _time.monotonic() - _hw_cache["at"] > 60:
+            try:
+                data = await asyncio.to_thread(hwhealth.collect)
+            except Exception as exc:  # noqa: BLE001 - show why instead of a 500
+                log.info("hw health: %s", exc)
+                return JSONResponse({"error": f"ვერ წავიკითხე: {type(exc).__name__}"}, status_code=503)
+            hist = await asyncio.to_thread(hwhealth.remember, services.state, data)
+            for d in data["disks"]:
+                d["forecast"] = hwhealth.forecast(hist, f"{d.get('name')}#{d.get('id')}")
+            _hw_cache.update(at=_time.monotonic(), data=data)
+        return _hw_cache["data"]
+
+    @app.get("/api/sysinfo")
+    async def sysinfo_api(live: int = 0, refresh: int = 0):
+        from ..features import sysinfo
+
+        if live:  # the 2-second refresh: only the moving numbers
+            snap = sysinfo.sampler().snapshot()
+            return {"live": snap["now"], "history": snap["history"][-1:]}
+        return await asyncio.to_thread(sysinfo.info, bool(refresh))
+
+    # -- console cable (COM ports) -----------------------------------------------------------------
+    @app.get("/api/console")
+    async def console_list():
+        from ..features import console
+
+        rows = await asyncio.to_thread(console.scan, services)
+        tried = services.state.get(console.TRIED_KEY) or {}
+        for r in rows:
+            t = tried.get(r["port"].upper()) or {}
+            r["state"], r["result"] = t.get("state", ""), t.get("result", "")
+            r["state_text"] = console.STATE_TEXT.get(r["state"], "")
+        return {"ports": rows}
+
+    @app.post("/api/console")
+    async def console_action(request: Request):
+        from ..features import console
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        body = await _json(request)
+        action, port = str(body.get("action", "probe")), str(body.get("port", ""))[:16]
+        if action not in {"probe", "add", "login", "skipsetup"} or not re.fullmatch(r"(COM\d{1,3}|/dev/tty[\w.]+)", port, re.I):
+            return JSONResponse({"error": "bad request"}, status_code=400)
+        if action != "probe" and is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        try:
+            r = await asyncio.to_thread(console.console_cmd, services, [action, port], request.state.who)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"console_{action}", args={"port": port}, ok=True)
+        return r.as_dict()
+
+    @app.get("/api/temps")
+    async def temps_api():
+        from ..features import temps
+
+        r = await asyncio.to_thread(temps.report, services.state)
+        return {**r, "history": r.get("history", [])[-180:]}
+
+    @app.post("/api/temps/thresholds")
+    async def temps_thresholds(request: Request):
+        from ..features import temps
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        try:
+            return {"thresholds": await asyncio.to_thread(temps.set_thresholds, services.state, await _json(request))}
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/api/surfscan")
+    async def surfscan_status(chkdsk: str = ""):
+        from ..features import surfscan
+
+        if chkdsk:
+            return {"drive": chkdsk[:1].upper(), "text": surfscan.chkdsk_result(chkdsk[:1])}
+        st = surfscan.read_status()
+        if st.get("status") == "running" and not surfscan.running():
+            st = {**st, "status": "stopped", "error": "სკანის პროცესი მოულოდნელად დასრულდა"}
+        await asyncio.to_thread(surfscan.remember, services.state, st)
+        return {"status": st, "history": services.state.get(surfscan.HISTORY_KEY) or {}}
+
+    @app.post("/api/surfscan/{action}")
+    async def surfscan_action(action: str, request: Request):
+        from ..features import surfscan
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        try:
+            if action == "start":
+                r = surfscan.start_scan(int(body.get("disk", 0)), str(body.get("label", ""))[:60])
+            elif action == "stop":
+                r = {"stopping": surfscan.stop_scan()}
+            elif action == "chkdsk":
+                r = await asyncio.to_thread(surfscan.start_chkdsk, str(body.get("drive", "C")))
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except (CommandError, ValueError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"surfscan_{action}", args=body, ok=True)
+        return r
+
+    @app.get("/api/bandwidth")
+    async def bandwidth_api(period: str = "15"):
+        from ..features import talkers
+
+        period = period if period in {"today", "week"} or period.isdigit() else "15"
+        return await asyncio.to_thread(talkers.report, services.state, period)
+
+    @app.get("/api/memtest")
+    async def memtest_status():
+        from ..features import memtest
+
+        st = memtest.read_status()
+        if st.get("status") in {"starting", "running"} and not memtest.running():
+            st = {**st, "status": "stopped", "error": "ტესტის პროცესი დასრულდა მოულოდნელად"}  # e.g. the PC rebooted
+        return st
+
+    @app.post("/api/memtest/{action}")
+    async def memtest_action(action: str, request: Request):
+        from ..features import memtest
+        from ..permissions import DENIED, is_viewer
+        from ..result import CommandError
+
+        if is_viewer(request.state.who):
+            return JSONResponse({"error": DENIED}, status_code=403)
+        body = await _json(request)
+        try:
+            if action == "start":
+                st = await asyncio.to_thread(memtest.start_test, str(body.get("mode", "quick")))
+            elif action == "stop":
+                st = {"stopping": memtest.stop()}
+            elif action == "reboot":
+                st = {"opened": await asyncio.to_thread(memtest.schedule_windows_diagnostic)}
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        log_event(settings.audit_log_path, user=request.state.who, tool=f"memtest_{action}", args=body, ok=True)
+        return st
+
+    # -- Wi-Fi dead zones (grid map + walk spots) --------------------------------------------------
+    @app.get("/api/wifimap")
+    async def wifimap_get():
+        from ..features.deadzones import load, mesh_advice
+
+        m = await asyncio.to_thread(load, services.state)
+        return {**m, "advice": mesh_advice(m)}
+
+    @app.post("/api/wifimap/{what}")
+    async def wifimap_post(what: str, request: Request):
+        from ..features import deadzones as dz
+        from ..result import CommandError
+
+        body = await _json(request)
+        try:
+            if what == "cell":
+                m = await asyncio.to_thread(dz.save_cell, services.state, body.get("row"), body.get("col"), body)
+            elif what == "spot":
+                m = await asyncio.to_thread(dz.save_spot, services.state, body.get("name", ""), body)
+            elif what == "router":
+                m = await asyncio.to_thread(dz.set_router, services.state, body.get("row"), body.get("col"))
+            elif what == "size":
+                m = await asyncio.to_thread(dz.set_size, services.state, body.get("cols"), body.get("rows"))
+            elif what == "clear":
+                v = dz.load(services.state)
+                m = dz.blank(v["cols"], v["rows"])
+                await asyncio.to_thread(services.state.set, dz.KEY, m)
+            else:
+                return JSONResponse({"error": "not found"}, status_code=404)
+        except CommandError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        cur = await asyncio.to_thread(dz.load, services.state)
+        return {"ok": True, "result": m, "map": cur, "advice": dz.mesh_advice(cur)}
+
+    @app.get("/api/topology")
+    async def topology_map(refresh: int = 0):
+        from ..features.livemap import build_map
+
+        try:
+            return await asyncio.to_thread(build_map, services, bool(refresh))
+        except Exception as exc:  # noqa: BLE001 - the map is optional: explain instead of a 500
+            log.info("topology map: %s", exc)
+            return JSONResponse({"error": f"რუკა ვერ აიგო: {type(exc).__name__}"}, status_code=503)
+
+    @app.get("/api/iot")
+    async def iot_last():
+        from ..features.iotcheck import KEY
+
+        return services.state.get(KEY) or {"devices": {}, "meta": {}}
+
+    @app.get("/api/live/export.csv")
+    async def live_export():
+        engine = live_engine()
+        if engine is None:
+            return live_off()
+        text = await asyncio.to_thread(engine.export_csv)
+        name = f"live-devices-{datetime.now():%Y%m%d-%H%M%S}.csv"
+        # BOM so Excel opens Georgian text as UTF-8
+        return Response("﻿" + text, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    # -- push notifications --------------------------------------------------------
+    @app.get("/api/push/key")
+    async def push_key():
+        if push is None:
+            return JSONResponse({"error": "push disabled"}, status_code=404)
+        return {"key": push.keys.public_b64, "subscriptions": len(push.subscriptions())}
+
+    @app.post("/api/push/subscribe")
+    async def push_subscribe(request: Request):
+        if push is None:
+            return JSONResponse({"error": "push disabled"}, status_code=404)
+        try:
+            push.subscribe(await _json(request))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True}
+
+    @app.post("/api/push/unsubscribe")
+    async def push_unsubscribe(request: Request):
+        if push is not None:
+            push.unsubscribe(str((await _json(request)).get("endpoint", "")))
+        return {"ok": True}
+
+    @app.post("/api/push/test")
+    async def push_test():
+        if push is None:
+            return JSONResponse({"error": "push disabled"}, status_code=404)
+        sent = await push.send("NetAgent", "✅ შეტყობინებები მუშაობს", tag="test")
+        return {"sent": sent}
+
+    return app
+
+
+async def _json(request: Request) -> dict:
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}

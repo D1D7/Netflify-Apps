@@ -1,0 +1,11 @@
+.env
+inventory/devices.yaml
+logs/
+backups/
+exports/
+/data/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+lab/chr/
